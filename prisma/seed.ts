@@ -1,40 +1,105 @@
 import "dotenv/config";
+
 import { PrismaPg } from "@prisma/adapter-pg";
-import { PrismaClient, PaymentMethod, TransactionType } from "@prisma/client";
+import {
+  PrismaClient,
+  PaymentMethod,
+  TransactionType,
+} from "@prisma/client";
+import bcrypt from "bcryptjs";
+
+const connectionString = process.env.DATABASE_URL;
+
+if (!connectionString) {
+  throw new Error("DATABASE_URL is not defined");
+}
 
 const adapter = new PrismaPg({
-  connectionString: process.env.DATABASE_URL,
+  connectionString,
 });
 
 const prisma = new PrismaClient({
   adapter,
 });
+
 async function main() {
   console.log("🌱 Seeding SpendWise database...");
+
+  // --------------------------------------------------
+  // Demo user
+  // --------------------------------------------------
+
+  const demoPassword = await bcrypt.hash(
+    "demo12345",
+    12
+  );
 
   const user = await prisma.user.upsert({
     where: {
       email: "demo@spendwise.app",
     },
-    update: {},
+    update: {
+      password: demoPassword,
+    },
     create: {
       email: "demo@spendwise.app",
       name: "Demo User",
+      password: demoPassword,
     },
   });
 
+  console.log(`👤 User ready: ${user.email}`);
+
+  // --------------------------------------------------
+  // Categories
+  // --------------------------------------------------
+
   const categoryData = [
-    { name: "Food & Drinks", icon: "🍔", color: "#10b981" },
-    { name: "Transport", icon: "🚕", color: "#3b82f6" },
-    { name: "Entertainment", icon: "🎬", color: "#a855f7" },
-    { name: "Shopping", icon: "🛍️", color: "#f59e0b" },
-    { name: "Bills", icon: "📱", color: "#ef4444" },
-    { name: "Education", icon: "🎓", color: "#6366f1" },
-    { name: "Health", icon: "💊", color: "#ec4899" },
-    { name: "Income", icon: "💰", color: "#22c55e" },
+    {
+      name: "Food & Drinks",
+      icon: "🍔",
+      color: "#10b981",
+    },
+    {
+      name: "Transport",
+      icon: "🚕",
+      color: "#3b82f6",
+    },
+    {
+      name: "Entertainment",
+      icon: "🎬",
+      color: "#a855f7",
+    },
+    {
+      name: "Shopping",
+      icon: "🛍️",
+      color: "#f59e0b",
+    },
+    {
+      name: "Bills",
+      icon: "📱",
+      color: "#ef4444",
+    },
+    {
+      name: "Education",
+      icon: "🎓",
+      color: "#6366f1",
+    },
+    {
+      name: "Health",
+      icon: "💊",
+      color: "#ec4899",
+    },
+    {
+      name: "Income",
+      icon: "💰",
+      color: "#22c55e",
+    },
   ];
 
- const categories: Awaited<ReturnType<typeof prisma.category.upsert>>[] = [];
+  const categories: Awaited<
+    ReturnType<typeof prisma.category.upsert>
+  >[] = [];
 
   for (const category of categoryData) {
     const created = await prisma.category.upsert({
@@ -52,14 +117,22 @@ async function main() {
   }
 
   const category = (name: string) => {
-    const found = categories.find((item) => item.name === name);
+    const found = categories.find(
+      (item) => item.name === name
+    );
 
     if (!found) {
-      throw new Error(`Category "${name}" not found`);
+      throw new Error(
+        `Category "${name}" not found`
+      );
     }
 
     return found;
   };
+
+  // --------------------------------------------------
+  // Clear demo user's existing data
+  // --------------------------------------------------
 
   await prisma.transaction.deleteMany({
     where: {
@@ -79,13 +152,18 @@ async function main() {
     },
   });
 
+  // --------------------------------------------------
+  // Transactions
+  // --------------------------------------------------
+
   const transactions = [
     {
       amount: 58400,
       type: TransactionType.INCOME,
       description: "Freelance Payment",
       date: new Date("2026-08-22T10:00:00"),
-      paymentMethod: PaymentMethod.BANK_TRANSFER,
+      paymentMethod:
+        PaymentMethod.BANK_TRANSFER,
       categoryId: category("Income").id,
     },
     {
@@ -94,7 +172,8 @@ async function main() {
       description: "Starbucks Coffee",
       date: new Date("2026-08-23T10:42:00"),
       paymentMethod: PaymentMethod.UPI,
-      categoryId: category("Food & Drinks").id,
+      categoryId:
+        category("Food & Drinks").id,
     },
     {
       amount: 420,
@@ -102,7 +181,8 @@ async function main() {
       description: "Uber",
       date: new Date("2026-08-23T08:15:00"),
       paymentMethod: PaymentMethod.UPI,
-      categoryId: category("Transport").id,
+      categoryId:
+        category("Transport").id,
     },
     {
       amount: 649,
@@ -110,7 +190,8 @@ async function main() {
       description: "Netflix",
       date: new Date("2026-08-22T20:30:00"),
       paymentMethod: PaymentMethod.CARD,
-      categoryId: category("Entertainment").id,
+      categoryId:
+        category("Entertainment").id,
     },
     {
       amount: 1250,
@@ -118,7 +199,8 @@ async function main() {
       description: "Amazon Shopping",
       date: new Date("2026-08-21T14:20:00"),
       paymentMethod: PaymentMethod.CARD,
-      categoryId: category("Shopping").id,
+      categoryId:
+        category("Shopping").id,
     },
     {
       amount: 850,
@@ -134,7 +216,8 @@ async function main() {
       description: "College Course",
       date: new Date("2026-08-19T16:45:00"),
       paymentMethod: PaymentMethod.UPI,
-      categoryId: category("Education").id,
+      categoryId:
+        category("Education").id,
     },
     {
       amount: 450,
@@ -142,7 +225,8 @@ async function main() {
       description: "Lunch",
       date: new Date("2026-08-18T13:15:00"),
       paymentMethod: PaymentMethod.CASH,
-      categoryId: category("Food & Drinks").id,
+      categoryId:
+        category("Food & Drinks").id,
     },
     {
       amount: 380,
@@ -150,7 +234,8 @@ async function main() {
       description: "Metro",
       date: new Date("2026-08-17T09:20:00"),
       paymentMethod: PaymentMethod.UPI,
-      categoryId: category("Transport").id,
+      categoryId:
+        category("Transport").id,
     },
   ];
 
@@ -163,30 +248,38 @@ async function main() {
     });
   }
 
+  // --------------------------------------------------
+  // Budgets
+  // --------------------------------------------------
+
   const budgets = [
     {
       amount: 5000,
       month: 8,
       year: 2026,
-      categoryId: category("Food & Drinks").id,
+      categoryId:
+        category("Food & Drinks").id,
     },
     {
       amount: 3500,
       month: 8,
       year: 2026,
-      categoryId: category("Transport").id,
+      categoryId:
+        category("Transport").id,
     },
     {
       amount: 2500,
       month: 8,
       year: 2026,
-      categoryId: category("Entertainment").id,
+      categoryId:
+        category("Entertainment").id,
     },
     {
       amount: 5000,
       month: 8,
       year: 2026,
-      categoryId: category("Shopping").id,
+      categoryId:
+        category("Shopping").id,
     },
   ];
 
@@ -199,18 +292,25 @@ async function main() {
     });
   }
 
+  // --------------------------------------------------
+  // Goal
+  // --------------------------------------------------
+
   await prisma.goal.create({
     data: {
       name: "New MacBook Pro",
       target: 150000,
       current: 82500,
       deadline: new Date("2026-12-31"),
-      description: "Savings goal for a new MacBook Pro",
+      description:
+        "Savings goal for a new MacBook Pro",
       userId: user.id,
     },
   });
 
-  console.log("✅ SpendWise database seeded successfully.");
+  console.log(
+    "✅ SpendWise database seeded successfully."
+  );
 }
 
 main()

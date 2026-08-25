@@ -1,26 +1,24 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
 
-const DEMO_USER_EMAIL = "demo@spendwise.app";
+import { auth } from "@/auth";
+import { prisma } from "@/lib/prisma";
 
 export async function GET() {
   try {
-    const user = await prisma.user.findUnique({
-      where: {
-        email: DEMO_USER_EMAIL,
-      },
-    });
+    const session = await auth();
 
-    if (!user) {
+    if (!session?.user?.id) {
       return NextResponse.json(
-        { error: "Demo user not found" },
-        { status: 404 }
+        { error: "Unauthorized" },
+        { status: 401 }
       );
     }
 
+    const userId = session.user.id;
+
     const budgets = await prisma.budget.findMany({
       where: {
-        userId: user.id,
+        userId,
       },
       include: {
         category: true,
@@ -31,17 +29,18 @@ export async function GET() {
       ],
     });
 
-    const transactions = await prisma.transaction.findMany({
-      where: {
-        userId: user.id,
-        type: "EXPENSE",
-      },
-      select: {
-        amount: true,
-        categoryId: true,
-        date: true,
-      },
-    });
+    const transactions =
+      await prisma.transaction.findMany({
+        where: {
+          userId,
+          type: "EXPENSE",
+        },
+        select: {
+          amount: true,
+          categoryId: true,
+          date: true,
+        },
+      });
 
     const result = budgets.map((budget) => {
       const spent = transactions
@@ -49,9 +48,12 @@ export async function GET() {
           const date = new Date(transaction.date);
 
           return (
-            transaction.categoryId === budget.categoryId &&
-            date.getMonth() + 1 === budget.month &&
-            date.getFullYear() === budget.year
+            transaction.categoryId ===
+              budget.categoryId &&
+            date.getMonth() + 1 ===
+              budget.month &&
+            date.getFullYear() ===
+              budget.year
           );
         })
         .reduce(
@@ -87,7 +89,10 @@ export async function GET() {
 
     return NextResponse.json(result);
   } catch (error) {
-    console.error("GET /api/budgets:", error);
+    console.error(
+      "GET /api/budgets:",
+      error
+    );
 
     return NextResponse.json(
       { error: "Failed to fetch budgets" },
@@ -98,20 +103,17 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
+    const session = await auth();
 
-    const user = await prisma.user.findUnique({
-      where: {
-        email: DEMO_USER_EMAIL,
-      },
-    });
-
-    if (!user) {
+    if (!session?.user?.id) {
       return NextResponse.json(
-        { error: "Demo user not found" },
-        { status: 404 }
+        { error: "Unauthorized" },
+        { status: 401 }
       );
     }
+
+    const userId = session.user.id;
+    const body = await request.json();
 
     const amount = Number(body.amount);
     const month = Number(body.month);
@@ -119,7 +121,10 @@ export async function POST(request: Request) {
 
     if (!amount || amount <= 0) {
       return NextResponse.json(
-        { error: "Valid budget amount is required" },
+        {
+          error:
+            "Valid budget amount is required",
+        },
         { status: 400 }
       );
     }
@@ -132,19 +137,37 @@ export async function POST(request: Request) {
       month > 12
     ) {
       return NextResponse.json(
-        { error: "Category, month and year are required" },
+        {
+          error:
+            "Category, month and year are required",
+        },
         { status: 400 }
       );
     }
 
-    const existingBudget = await prisma.budget.findFirst({
-      where: {
-        userId: user.id,
-        categoryId: body.categoryId,
-        month,
-        year,
-      },
-    });
+    const category =
+      await prisma.category.findUnique({
+        where: {
+          id: body.categoryId,
+        },
+      });
+
+    if (!category) {
+      return NextResponse.json(
+        { error: "Category not found" },
+        { status: 404 }
+      );
+    }
+
+    const existingBudget =
+      await prisma.budget.findFirst({
+        where: {
+          userId,
+          categoryId: body.categoryId,
+          month,
+          year,
+        },
+      });
 
     if (existingBudget) {
       return NextResponse.json(
@@ -156,18 +179,19 @@ export async function POST(request: Request) {
       );
     }
 
-    const budget = await prisma.budget.create({
-      data: {
-        amount,
-        month,
-        year,
-        userId: user.id,
-        categoryId: body.categoryId,
-      },
-      include: {
-        category: true,
-      },
-    });
+    const budget =
+      await prisma.budget.create({
+        data: {
+          amount,
+          month,
+          year,
+          userId,
+          categoryId: body.categoryId,
+        },
+        include: {
+          category: true,
+        },
+      });
 
     return NextResponse.json(
       {
@@ -188,7 +212,10 @@ export async function POST(request: Request) {
       { status: 201 }
     );
   } catch (error) {
-    console.error("POST /api/budgets:", error);
+    console.error(
+      "POST /api/budgets:",
+      error
+    );
 
     return NextResponse.json(
       { error: "Failed to create budget" },
@@ -199,6 +226,16 @@ export async function POST(request: Request) {
 
 export async function PATCH(request: Request) {
   try {
+    const session = await auth();
+
+    if (!session?.user?.id) {
+      return NextResponse.json(
+        { error: "Unauthorized" },
+        { status: 401 }
+      );
+    }
+
+    const userId = session.user.id;
     const body = await request.json();
 
     if (!body.id) {
@@ -208,25 +245,13 @@ export async function PATCH(request: Request) {
       );
     }
 
-    const user = await prisma.user.findUnique({
-      where: {
-        email: DEMO_USER_EMAIL,
-      },
-    });
-
-    if (!user) {
-      return NextResponse.json(
-        { error: "Demo user not found" },
-        { status: 404 }
-      );
-    }
-
-    const existingBudget = await prisma.budget.findFirst({
-      where: {
-        id: body.id,
-        userId: user.id,
-      },
-    });
+    const existingBudget =
+      await prisma.budget.findFirst({
+        where: {
+          id: body.id,
+          userId,
+        },
+      });
 
     if (!existingBudget) {
       return NextResponse.json(
@@ -239,22 +264,26 @@ export async function PATCH(request: Request) {
 
     if (!amount || amount <= 0) {
       return NextResponse.json(
-        { error: "Valid budget amount is required" },
+        {
+          error:
+            "Valid budget amount is required",
+        },
         { status: 400 }
       );
     }
 
-    const budget = await prisma.budget.update({
-      where: {
-        id: existingBudget.id,
-      },
-      data: {
-        amount,
-      },
-      include: {
-        category: true,
-      },
-    });
+    const budget =
+      await prisma.budget.update({
+        where: {
+          id: existingBudget.id,
+        },
+        data: {
+          amount,
+        },
+        include: {
+          category: true,
+        },
+      });
 
     return NextResponse.json({
       id: budget.id,
@@ -269,7 +298,10 @@ export async function PATCH(request: Request) {
       },
     });
   } catch (error) {
-    console.error("PATCH /api/budgets:", error);
+    console.error(
+      "PATCH /api/budgets:",
+      error
+    );
 
     return NextResponse.json(
       { error: "Failed to update budget" },
@@ -280,6 +312,16 @@ export async function PATCH(request: Request) {
 
 export async function DELETE(request: Request) {
   try {
+    const session = await auth();
+
+    if (!session?.user?.id) {
+      return NextResponse.json(
+        { error: "Unauthorized" },
+        { status: 401 }
+      );
+    }
+
+    const userId = session.user.id;
     const body = await request.json();
 
     if (!body.id) {
@@ -289,25 +331,13 @@ export async function DELETE(request: Request) {
       );
     }
 
-    const user = await prisma.user.findUnique({
-      where: {
-        email: DEMO_USER_EMAIL,
-      },
-    });
-
-    if (!user) {
-      return NextResponse.json(
-        { error: "Demo user not found" },
-        { status: 404 }
-      );
-    }
-
-    const budget = await prisma.budget.findFirst({
-      where: {
-        id: body.id,
-        userId: user.id,
-      },
-    });
+    const budget =
+      await prisma.budget.findFirst({
+        where: {
+          id: body.id,
+          userId,
+        },
+      });
 
     if (!budget) {
       return NextResponse.json(
@@ -326,7 +356,10 @@ export async function DELETE(request: Request) {
       success: true,
     });
   } catch (error) {
-    console.error("DELETE /api/budgets:", error);
+    console.error(
+      "DELETE /api/budgets:",
+      error
+    );
 
     return NextResponse.json(
       { error: "Failed to delete budget" },

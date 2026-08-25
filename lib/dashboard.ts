@@ -1,14 +1,21 @@
+import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 
 export async function getDashboardData() {
+  const session = await auth();
+
+  if (!session?.user?.id) {
+    throw new Error("Unauthorized");
+  }
+
   const user = await prisma.user.findUnique({
     where: {
-      email: "demo@spendwise.app",
+      id: session.user.id,
     },
   });
 
   if (!user) {
-    throw new Error("Demo user not found");
+    throw new Error("User not found");
   }
 
   const transactions = await prisma.transaction.findMany({
@@ -23,11 +30,13 @@ export async function getDashboardData() {
     },
   });
 
+  const now = new Date();
+
   const budgets = await prisma.budget.findMany({
     where: {
       userId: user.id,
-      month: 8,
-      year: 2026,
+      month: now.getMonth() + 1,
+      year: now.getFullYear(),
     },
     include: {
       category: true,
@@ -44,16 +53,24 @@ export async function getDashboardData() {
   });
 
   const income = transactions
-    .filter((transaction) => transaction.type === "INCOME")
+    .filter(
+      (transaction) =>
+        transaction.type === "INCOME"
+    )
     .reduce(
-      (total, transaction) => total + Number(transaction.amount),
+      (total, transaction) =>
+        total + Number(transaction.amount),
       0
     );
 
   const expenses = transactions
-    .filter((transaction) => transaction.type === "EXPENSE")
+    .filter(
+      (transaction) =>
+        transaction.type === "EXPENSE"
+    )
     .reduce(
-      (total, transaction) => total + Number(transaction.amount),
+      (total, transaction) =>
+        total + Number(transaction.amount),
       0
     );
 
@@ -62,17 +79,25 @@ export async function getDashboardData() {
   const savingsRate =
     income > 0 ? (balance / income) * 100 : 0;
 
-  const categorySpending = transactions
-    .filter((transaction) => transaction.type === "EXPENSE")
-    .reduce<Record<string, number>>((result, transaction) => {
-      const categoryName = transaction.category.name;
+  const categorySpending =
+    transactions
+      .filter(
+        (transaction) =>
+          transaction.type === "EXPENSE"
+      )
+      .reduce<Record<string, number>>(
+        (result, transaction) => {
+          const categoryName =
+            transaction.category.name;
 
-      result[categoryName] =
-        (result[categoryName] || 0) +
-        Number(transaction.amount);
+          result[categoryName] =
+            (result[categoryName] || 0) +
+            Number(transaction.amount);
 
-      return result;
-    }, {});
+          return result;
+        },
+        {}
+      );
 
   const weeklySpending = Array.from(
     { length: 7 },
@@ -84,9 +109,11 @@ export async function getDashboardData() {
       );
 
       const dayStart = new Date(date);
+
       dayStart.setHours(0, 0, 0, 0);
 
       const dayEnd = new Date(date);
+
       dayEnd.setHours(23, 59, 59, 999);
 
       const amount = transactions
@@ -118,28 +145,30 @@ export async function getDashboardData() {
    * Convert Prisma Decimal values into numbers
    * before sending the data to a Client Component.
    */
-  const serializedTransactions = transactions.map(
-    (transaction) => ({
+
+  const serializedTransactions =
+    transactions.map((transaction) => ({
       id: transaction.id,
       amount: Number(transaction.amount),
       type: transaction.type,
       description: transaction.description,
       date: transaction.date.toISOString(),
-      paymentMethod: transaction.paymentMethod,
+      paymentMethod:
+        transaction.paymentMethod,
       notes: transaction.notes,
       userId: transaction.userId,
       categoryId: transaction.categoryId,
-      createdAt: transaction.createdAt.toISOString(),
-      updatedAt: transaction.updatedAt.toISOString(),
-
+      createdAt:
+        transaction.createdAt.toISOString(),
+      updatedAt:
+        transaction.updatedAt.toISOString(),
       category: {
         id: transaction.category.id,
         name: transaction.category.name,
         icon: transaction.category.icon,
         color: transaction.category.color,
       },
-    })
-  );
+    }));
 
   const serializedBudgets = budgets.map(
     (budget) => ({
@@ -147,7 +176,6 @@ export async function getDashboardData() {
       amount: Number(budget.amount),
       month: budget.month,
       year: budget.year,
-
       category: {
         id: budget.category.id,
         name: budget.category.name,
@@ -175,16 +203,13 @@ export async function getDashboardData() {
       name: user.name,
       email: user.email,
     },
-
     transactions: serializedTransactions,
     budgets: serializedBudgets,
     goals: serializedGoals,
-
     income,
     expenses,
     balance,
     savingsRate,
-
     categorySpending,
     weeklySpending,
   };

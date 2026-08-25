@@ -30,36 +30,34 @@ type TransactionForm = {
   notes: string;
 };
 
-const categoryFallbacks: Category[] = [
-  { id: "food", name: "Food & Drinks", icon: "🍔", color: "#10b981" },
-  { id: "transport", name: "Transport", icon: "🚕", color: "#3b82f6" },
-  {
-    id: "entertainment",
-    name: "Entertainment",
-    icon: "🎬",
-    color: "#a855f7",
-  },
-  { id: "shopping", name: "Shopping", icon: "🛍️", color: "#f59e0b" },
-  { id: "bills", name: "Bills", icon: "📱", color: "#ef4444" },
-  { id: "education", name: "Education", icon: "🎓", color: "#6366f1" },
-  { id: "health", name: "Health", icon: "💊", color: "#ec4899" },
-  { id: "income", name: "Income", icon: "💰", color: "#22c55e" },
-];
-
 export default function TransactionsClient() {
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [categories, setCategories] = useState<Category[]>([]);
+  const [transactions, setTransactions] = useState<
+    Transaction[]
+  >([]);
+  const [categories, setCategories] = useState<Category[]>(
+    []
+  );
+
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<
     "ALL" | "EXPENSE" | "INCOME"
   >("ALL");
-  const [categoryFilter, setCategoryFilter] = useState("ALL");
+  const [categoryFilter, setCategoryFilter] =
+    useState("ALL");
+
   const [modalOpen, setModalOpen] = useState(false);
 
-  const today = new Date().toISOString().slice(0, 10);
+  // NEW: selected transaction for detail modal
+  const [selectedTransaction, setSelectedTransaction] =
+    useState<Transaction | null>(null);
+
+  const today = new Date()
+    .toISOString()
+    .slice(0, 10);
 
   const [form, setForm] = useState<TransactionForm>({
     amount: "",
@@ -76,40 +74,57 @@ export default function TransactionsClient() {
       setLoading(true);
       setError("");
 
-      const response = await fetch("/api/transactions");
+      const [
+        transactionsResponse,
+        categoriesResponse,
+      ] = await Promise.all([
+        fetch("/api/transactions", {
+          cache: "no-store",
+        }),
+        fetch("/api/categories", {
+          cache: "no-store",
+        }),
+      ]);
 
-      if (!response.ok) {
-        throw new Error("Failed to load transactions");
+      const transactionsResult =
+        await transactionsResponse.json();
+
+      const categoriesResult =
+        await categoriesResponse.json();
+
+      if (!transactionsResponse.ok) {
+        throw new Error(
+          transactionsResult?.error ||
+            "Failed to load transactions"
+        );
       }
 
-      const data = await response.json();
+      if (!categoriesResponse.ok) {
+        throw new Error(
+          categoriesResult?.error ||
+            "Failed to load categories"
+        );
+      }
 
-      setTransactions(data);
-
-      const uniqueCategories = data.reduce(
-        (result: Category[], transaction: Transaction) => {
-          const exists = result.some(
-            (category) =>
-              category.id === transaction.category.id
-          );
-
-          if (!exists) {
-            result.push(transaction.category);
-          }
-
-          return result;
-        },
-        []
+      setTransactions(
+        Array.isArray(transactionsResult)
+          ? transactionsResult
+          : []
       );
 
       setCategories(
-        uniqueCategories.length > 0
-          ? uniqueCategories
-          : categoryFallbacks
+        Array.isArray(categoriesResult)
+          ? categoriesResult
+          : []
       );
     } catch (err) {
       console.error(err);
-      setError("Unable to load transactions.");
+
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to load transactions."
+      );
     } finally {
       setLoading(false);
     }
@@ -121,7 +136,9 @@ export default function TransactionsClient() {
 
   const filteredTransactions = useMemo(() => {
     return transactions.filter((transaction) => {
-      const query = search.toLowerCase().trim();
+      const query = search
+        .toLowerCase()
+        .trim();
 
       const matchesSearch =
         !query ||
@@ -138,7 +155,8 @@ export default function TransactionsClient() {
 
       const matchesCategory =
         categoryFilter === "ALL" ||
-        transaction.category.id === categoryFilter;
+        transaction.category.id ===
+          categoryFilter;
 
       return (
         Boolean(matchesSearch) &&
@@ -154,12 +172,26 @@ export default function TransactionsClient() {
   ]);
 
   const totalIncome = transactions
-    .filter((transaction) => transaction.type === "INCOME")
-    .reduce((sum, transaction) => sum + transaction.amount, 0);
+    .filter(
+      (transaction) =>
+        transaction.type === "INCOME"
+    )
+    .reduce(
+      (sum, transaction) =>
+        sum + transaction.amount,
+      0
+    );
 
   const totalExpense = transactions
-    .filter((transaction) => transaction.type === "EXPENSE")
-    .reduce((sum, transaction) => sum + transaction.amount, 0);
+    .filter(
+      (transaction) =>
+        transaction.type === "EXPENSE"
+    )
+    .reduce(
+      (sum, transaction) =>
+        sum + transaction.amount,
+      0
+    );
 
   const balance = totalIncome - totalExpense;
 
@@ -171,25 +203,50 @@ export default function TransactionsClient() {
     }).format(value);
 
   const formatDate = (value: string) =>
-    new Date(value).toLocaleDateString("en-IN", {
+    new Date(value).toLocaleDateString(
+      "en-IN",
+      {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+      }
+    );
+
+  const formatDateTime = (value: string) =>
+    new Date(value).toLocaleString("en-IN", {
       day: "2-digit",
       month: "short",
       year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
     });
 
   const openModal = () => {
+    const expenseCategory =
+      categories.find(
+        (category) =>
+          category.name === "Food & Drinks"
+      )?.id;
+
+    const firstExpenseCategory =
+      categories.find(
+        (category) =>
+          category.name !== "Income"
+      )?.id;
+
     setForm({
       amount: "",
       type: "EXPENSE",
       description: "",
       categoryId:
-        categories.find(
-          (category) => category.name === "Food & Drinks"
-        )?.id ||
+        expenseCategory ||
+        firstExpenseCategory ||
         categories[0]?.id ||
         "",
       paymentMethod: "UPI",
-      date: new Date().toISOString().slice(0, 10),
+      date: new Date()
+        .toISOString()
+        .slice(0, 10),
       notes: "",
     });
 
@@ -202,7 +259,10 @@ export default function TransactionsClient() {
   ) => {
     event.preventDefault();
 
-    if (!form.amount || Number(form.amount) <= 0) {
+    if (
+      !form.amount ||
+      Number(form.amount) <= 0
+    ) {
       setError("Enter a valid amount.");
       return;
     }
@@ -212,36 +272,65 @@ export default function TransactionsClient() {
       return;
     }
 
+    const selectedCategory =
+      categories.find(
+        (category) =>
+          category.id === form.categoryId
+      );
+
+    if (!selectedCategory) {
+      setError(
+        "Selected category is no longer available. Please reopen the form."
+      );
+      return;
+    }
+
     try {
       setSubmitting(true);
       setError("");
 
-      const response = await fetch("/api/transactions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          amount: Number(form.amount),
-          type: form.type,
-          description:
-            form.description.trim() || null,
-          categoryId: form.categoryId,
-          paymentMethod: form.paymentMethod,
-          date: form.date,
-          notes: form.notes.trim() || null,
-        }),
-      });
+      const response = await fetch(
+        "/api/transactions",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            amount: Number(form.amount),
+            type: form.type,
+            description:
+              form.description.trim() ||
+              null,
+            categoryId:
+              selectedCategory.id,
+            paymentMethod:
+              form.paymentMethod,
+            date: form.date,
+            notes:
+              form.notes.trim() || null,
+          }),
+        }
+      );
 
       const result = await response.json();
 
       if (!response.ok) {
         throw new Error(
-          result.error || "Failed to create transaction"
+          result?.error ||
+            "Failed to create transaction"
         );
       }
 
+      if (result?.id) {
+        setTransactions((current) => [
+          result,
+          ...current,
+        ]);
+      }
+
       setModalOpen(false);
+
       await fetchTransactions();
     } catch (err) {
       console.error(err);
@@ -266,28 +355,55 @@ export default function TransactionsClient() {
     }
 
     try {
-      const response = await fetch("/api/transactions", {
-        method: "DELETE",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ id }),
-      });
+      setError("");
+
+      const response = await fetch(
+        "/api/transactions",
+        {
+          method: "DELETE",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ id }),
+        }
+      );
+
+      const result = await response.json();
 
       if (!response.ok) {
-        throw new Error("Failed to delete transaction");
+        throw new Error(
+          result?.error ||
+            "Failed to delete transaction"
+        );
       }
 
       setTransactions((current) =>
         current.filter(
-          (transaction) => transaction.id !== id
+          (transaction) =>
+            transaction.id !== id
         )
       );
+
+      // Close detail modal if the deleted
+      // transaction was open.
+      setSelectedTransaction(null);
     } catch (err) {
       console.error(err);
-      setError("Failed to delete transaction.");
+
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to delete transaction."
+      );
     }
   };
+
+  const formCategories = categories.filter(
+    (category) =>
+      form.type === "INCOME"
+        ? category.name === "Income"
+        : category.name !== "Income"
+  );
 
   return (
     <main className="min-h-screen bg-[#08090b] text-white">
@@ -315,7 +431,10 @@ export default function TransactionsClient() {
               href="/dashboard"
               className="text-sm font-semibold tracking-[-0.03em]"
             >
-              Spend<span className="text-emerald-400">Wise</span>
+              Spend
+              <span className="text-emerald-400">
+                Wise
+              </span>
             </a>
 
             <p className="mt-1 text-[10px] text-white/25">
@@ -333,7 +452,11 @@ export default function TransactionsClient() {
 
             <button
               onClick={openModal}
-              className="rounded-xl bg-white px-4 py-2 text-xs font-semibold text-black transition hover:bg-emerald-300"
+              disabled={
+                loading ||
+                categories.length === 0
+              }
+              className="rounded-xl bg-white px-4 py-2 text-xs font-semibold text-black transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-50"
             >
               + Add transaction
             </button>
@@ -359,7 +482,7 @@ export default function TransactionsClient() {
           </div>
         </div>
 
-        {/* Summary cards */}
+        {/* Summary */}
         <section className="mt-8 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <SummaryCard
             label="Balance"
@@ -382,7 +505,9 @@ export default function TransactionsClient() {
 
           <SummaryCard
             label="Transactions"
-            value={String(transactions.length)}
+            value={String(
+              transactions.length
+            )}
             icon="↔"
           />
         </section>
@@ -390,7 +515,6 @@ export default function TransactionsClient() {
         {/* Filters */}
         <section className="mt-5 rounded-3xl border border-white/[0.07] bg-white/[0.025] p-4 sm:p-5">
           <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-            {/* Search */}
             <div className="relative flex-1">
               <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-xs text-white/20">
                 ⌕
@@ -399,7 +523,9 @@ export default function TransactionsClient() {
               <input
                 value={search}
                 onChange={(event) =>
-                  setSearch(event.target.value)
+                  setSearch(
+                    event.target.value
+                  )
                 }
                 placeholder="Search transactions..."
                 className="h-11 w-full rounded-xl border border-white/[0.07] bg-white/[0.025] pl-10 pr-4 text-xs text-white outline-none placeholder:text-white/20 focus:border-emerald-400/30"
@@ -409,21 +535,31 @@ export default function TransactionsClient() {
             <div className="flex flex-wrap gap-2">
               <FilterButton
                 active={typeFilter === "ALL"}
-                onClick={() => setTypeFilter("ALL")}
+                onClick={() =>
+                  setTypeFilter("ALL")
+                }
               >
                 All
               </FilterButton>
 
               <FilterButton
-                active={typeFilter === "EXPENSE"}
-                onClick={() => setTypeFilter("EXPENSE")}
+                active={
+                  typeFilter === "EXPENSE"
+                }
+                onClick={() =>
+                  setTypeFilter("EXPENSE")
+                }
               >
                 Expenses
               </FilterButton>
 
               <FilterButton
-                active={typeFilter === "INCOME"}
-                onClick={() => setTypeFilter("INCOME")}
+                active={
+                  typeFilter === "INCOME"
+                }
+                onClick={() =>
+                  setTypeFilter("INCOME")
+                }
               >
                 Income
               </FilterButton>
@@ -431,7 +567,9 @@ export default function TransactionsClient() {
               <select
                 value={categoryFilter}
                 onChange={(event) =>
-                  setCategoryFilter(event.target.value)
+                  setCategoryFilter(
+                    event.target.value
+                  )
                 }
                 className="h-9 rounded-xl border border-white/[0.07] bg-[#101214] px-3 text-[10px] text-white/50 outline-none focus:border-emerald-400/30"
               >
@@ -439,14 +577,16 @@ export default function TransactionsClient() {
                   All categories
                 </option>
 
-                {categories.map((category) => (
-                  <option
-                    key={category.id}
-                    value={category.id}
-                  >
-                    {category.name}
-                  </option>
-                ))}
+                {categories.map(
+                  (category) => (
+                    <option
+                      key={category.id}
+                      value={category.id}
+                    >
+                      {category.name}
+                    </option>
+                  )
+                )}
               </select>
             </div>
           </div>
@@ -468,15 +608,19 @@ export default function TransactionsClient() {
               </p>
 
               <p className="mt-1 text-xs text-white/25">
-                {filteredTransactions.length} result
-                {filteredTransactions.length === 1
+                {
+                  filteredTransactions.length
+                }{" "}
+                result
+                {filteredTransactions.length ===
+                1
                   ? ""
                   : "s"}
               </p>
             </div>
 
             <span className="text-[10px] text-white/20">
-              Latest first
+              Click a transaction for details
             </span>
           </div>
 
@@ -488,7 +632,8 @@ export default function TransactionsClient() {
                 Loading transactions...
               </p>
             </div>
-          ) : filteredTransactions.length === 0 ? (
+          ) : filteredTransactions.length ===
+            0 ? (
             <div className="px-6 py-20 text-center">
               <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border border-white/[0.07] bg-white/[0.025] text-xl">
                 ◇
@@ -499,110 +644,314 @@ export default function TransactionsClient() {
               </h3>
 
               <p className="mt-2 text-xs text-white/25">
-                Try changing your filters or add a new
-                transaction.
+                Try changing your filters or
+                add a new transaction.
               </p>
 
               <button
                 onClick={openModal}
-                className="mt-5 rounded-xl bg-white px-4 py-2.5 text-xs font-semibold text-black hover:bg-emerald-300"
+                disabled={
+                  categories.length === 0
+                }
+                className="mt-5 rounded-xl bg-white px-4 py-2.5 text-xs font-semibold text-black hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 + Add transaction
               </button>
             </div>
           ) : (
             <div className="divide-y divide-white/[0.05]">
-              {filteredTransactions.map((transaction) => {
-                const isIncome =
-                  transaction.type === "INCOME";
+              {filteredTransactions.map(
+                (transaction) => {
+                  const isIncome =
+                    transaction.type ===
+                    "INCOME";
 
-                return (
-                  <div
-                    key={transaction.id}
-                    className="group flex flex-col gap-4 px-5 py-5 transition hover:bg-white/[0.02] sm:flex-row sm:items-center sm:justify-between sm:px-7"
-                  >
-                    <div className="flex min-w-0 items-center gap-4">
-                      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white/[0.045] text-lg">
-                        {transaction.category.icon || "◈"}
-                      </div>
+                  return (
+                    <button
+                      key={transaction.id}
+                      type="button"
+                      onClick={() =>
+                        setSelectedTransaction(
+                          transaction
+                        )
+                      }
+                      className="group flex w-full flex-col gap-4 px-5 py-5 text-left transition hover:bg-white/[0.035] sm:flex-row sm:items-center sm:justify-between sm:px-7"
+                    >
+                      <div className="flex min-w-0 items-center gap-4">
+                        <div
+                          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white/[0.045] text-lg"
+                          style={{
+                            border:
+                              transaction
+                                .category
+                                .color
+                              ? `1px solid ${transaction.category.color}25`
+                              : undefined,
+                          }}
+                        >
+                          {transaction.category
+                            .icon || "◈"}
+                        </div>
 
-                      <div className="min-w-0">
-                        <p className="truncate text-xs font-medium text-white">
-                          {transaction.description ||
-                            transaction.category.name}
-                        </p>
+                        <div className="min-w-0">
+                          <p className="truncate text-xs font-medium text-white">
+                            {transaction.description ||
+                              transaction.category
+                                .name}
+                          </p>
 
-                        <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[10px] text-white/25">
-                          <span>
-                            {transaction.category.name}
-                          </span>
+                          <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[10px] text-white/25">
+                            <span>
+                              {
+                                transaction
+                                  .category
+                                  .name
+                              }
+                            </span>
 
-                          <span className="text-white/10">
-                            •
-                          </span>
+                            <span className="text-white/10">
+                              •
+                            </span>
 
-                          <span>
-                            {transaction.paymentMethod}
-                          </span>
+                            <span>
+                              {
+                                transaction.paymentMethod
+                              }
+                            </span>
 
-                          <span className="text-white/10">
-                            •
-                          </span>
+                            <span className="text-white/10">
+                              •
+                            </span>
 
-                          <span>
-                            {formatDate(transaction.date)}
-                          </span>
+                            <span>
+                              {formatDate(
+                                transaction.date
+                              )}
+                            </span>
+                          </div>
                         </div>
                       </div>
-                    </div>
 
-                    <div className="flex items-center justify-between gap-5 sm:justify-end">
-                      <div className="text-left sm:text-right">
-                        <p
-                          className={
-                            "text-sm font-semibold " +
-                            (isIncome
-                              ? "text-emerald-300"
-                              : "text-white/75")
-                          }
-                        >
-                          {isIncome ? "+" : "-"}
-                          {formatCurrency(
-                            transaction.amount
-                          )}
-                        </p>
+                      <div className="flex items-center justify-between gap-5 sm:justify-end">
+                        <div className="text-left sm:text-right">
+                          <p
+                            className={
+                              "text-sm font-semibold " +
+                              (isIncome
+                                ? "text-emerald-300"
+                                : "text-white/75")
+                            }
+                          >
+                            {isIncome
+                              ? "+"
+                              : "-"}
+                            {formatCurrency(
+                              transaction.amount
+                            )}
+                          </p>
 
-                        <p
-                          className={
-                            "mt-1 text-[9px] " +
-                            (isIncome
-                              ? "text-emerald-300/50"
-                              : "text-white/20")
-                          }
-                        >
-                          {isIncome ? "Income" : "Expense"}
-                        </p>
+                          <p
+                            className={
+                              "mt-1 text-[9px] " +
+                              (isIncome
+                                ? "text-emerald-300/50"
+                                : "text-white/20")
+                            }
+                          >
+                            {isIncome
+                              ? "Income"
+                              : "Expense"}
+                          </p>
+                        </div>
+
+                        <span className="text-xs text-white/15 transition group-hover:translate-x-0.5 group-hover:text-emerald-300">
+                          →
+                        </span>
                       </div>
-
-                      <button
-                        onClick={() =>
-                          handleDelete(transaction.id)
-                        }
-                        className="rounded-lg px-2.5 py-2 text-[10px] text-white/15 opacity-100 transition hover:bg-red-400/10 hover:text-red-300 sm:opacity-0 sm:group-hover:opacity-100"
-                        title="Delete transaction"
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
+                    </button>
+                  );
+                }
+              )}
             </div>
           )}
         </section>
       </div>
 
-      {/* Add Transaction Modal */}
+      {/* ================================================= */}
+      {/* TRANSACTION DETAIL MODAL                          */}
+      {/* ================================================= */}
+
+      {selectedTransaction && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/75 p-4 backdrop-blur-md">
+          <div
+            className="absolute inset-0"
+            onClick={() =>
+              setSelectedTransaction(null)
+            }
+          />
+
+          <div className="relative w-full max-w-md overflow-hidden rounded-3xl border border-white/[0.08] bg-[#0d0f11] shadow-2xl">
+            {/* Modal header */}
+            <div className="border-b border-white/[0.06] px-6 py-5">
+              <div className="flex items-start justify-between">
+                <div>
+                  <p className="text-[10px] font-medium uppercase tracking-[0.2em] text-emerald-400">
+                    Transaction details
+                  </p>
+
+                  <p className="mt-1 text-[10px] text-white/20">
+                    {formatDateTime(
+                      selectedTransaction.date
+                    )}
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    setSelectedTransaction(
+                      null
+                    )
+                  }
+                  className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/[0.06] text-white/30 transition hover:bg-white/[0.04] hover:text-white"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+
+            {/* Amount */}
+            <div className="px-6 py-7 text-center">
+              <div
+                className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl text-2xl"
+                style={{
+                  backgroundColor:
+                    selectedTransaction.category
+                      .color
+                      ? `${selectedTransaction.category.color}12`
+                      : "rgba(255,255,255,0.04)",
+                  border:
+                    selectedTransaction.category
+                      .color
+                      ? `1px solid ${selectedTransaction.category.color}25`
+                      : "1px solid rgba(255,255,255,0.06)",
+                }}
+              >
+                {selectedTransaction.category
+                  .icon || "◈"}
+              </div>
+
+              <p
+                className={
+                  "mt-5 text-4xl font-semibold tracking-[-0.05em] " +
+                  (selectedTransaction.type ===
+                  "INCOME"
+                    ? "text-emerald-300"
+                    : "text-white")
+                }
+              >
+                {selectedTransaction.type ===
+                "INCOME"
+                  ? "+"
+                  : "-"}
+                {formatCurrency(
+                  selectedTransaction.amount
+                )}
+              </p>
+
+              <p className="mt-2 text-sm text-white/40">
+                {selectedTransaction.type ===
+                "INCOME"
+                  ? "Income"
+                  : "Expense"}
+              </p>
+            </div>
+
+            {/* Details */}
+            <div className="px-6 pb-6">
+              <div className="overflow-hidden rounded-2xl border border-white/[0.06] bg-white/[0.02]">
+                <DetailRow
+                  label="Description"
+                  value={
+                    selectedTransaction.description ||
+                    "No description"
+                  }
+                />
+
+                <DetailRow
+                  label="Category"
+                  value={`${selectedTransaction.category.icon || ""} ${selectedTransaction.category.name}`}
+                />
+
+                <DetailRow
+                  label="Payment method"
+                  value={
+                    selectedTransaction.paymentMethod
+                  }
+                />
+
+                <DetailRow
+                  label="Date"
+                  value={formatDateTime(
+                    selectedTransaction.date
+                  )}
+                />
+
+                <DetailRow
+                  label="Transaction ID"
+                  value={selectedTransaction.id}
+                  mono
+                  last={
+                    !selectedTransaction.notes
+                  }
+                />
+
+                {selectedTransaction.notes && (
+                  <DetailRow
+                    label="Notes"
+                    value={
+                      selectedTransaction.notes
+                    }
+                    last
+                  />
+                )}
+              </div>
+
+              {/* Actions */}
+              <div className="mt-5 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setSelectedTransaction(
+                      null
+                    )
+                  }
+                  className="flex-1 rounded-xl border border-white/[0.07] bg-white/[0.025] py-3 text-xs font-medium text-white/50 transition hover:bg-white/[0.05] hover:text-white"
+                >
+                  Close
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleDelete(
+                      selectedTransaction.id
+                    )
+                  }
+                  className="rounded-xl border border-red-400/10 bg-red-400/[0.05] px-5 py-3 text-xs font-medium text-red-300 transition hover:bg-red-400/[0.1]"
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================================================= */}
+      {/* ADD TRANSACTION MODAL                             */}
+      {/* ================================================= */}
+
       {modalOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4 backdrop-blur-md">
           <div
@@ -626,13 +975,16 @@ export default function TransactionsClient() {
                 </h2>
 
                 <p className="mt-1 text-xs text-white/25">
-                  Record your latest financial activity.
+                  Record your latest financial
+                  activity.
                 </p>
               </div>
 
               <button
                 disabled={submitting}
-                onClick={() => setModalOpen(false)}
+                onClick={() =>
+                  setModalOpen(false)
+                }
                 className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/[0.06] text-white/30 hover:bg-white/[0.04] hover:text-white"
               >
                 ×
@@ -656,11 +1008,24 @@ export default function TransactionsClient() {
                       setForm((current) => ({
                         ...current,
                         type: "EXPENSE",
+                        categoryId:
+                          categories.find(
+                            (category) =>
+                              category.name ===
+                              "Food & Drinks"
+                          )?.id ||
+                          categories.find(
+                            (category) =>
+                              category.name !==
+                              "Income"
+                          )?.id ||
+                          "",
                       }))
                     }
                     className={
                       "rounded-xl border py-3 text-xs transition " +
-                      (form.type === "EXPENSE"
+                      (form.type ===
+                      "EXPENSE"
                         ? "border-red-400/20 bg-red-400/[0.08] text-red-300"
                         : "border-white/[0.07] bg-white/[0.025] text-white/35")
                     }
@@ -674,11 +1039,18 @@ export default function TransactionsClient() {
                       setForm((current) => ({
                         ...current,
                         type: "INCOME",
+                        categoryId:
+                          categories.find(
+                            (category) =>
+                              category.name ===
+                              "Income"
+                          )?.id || "",
                       }))
                     }
                     className={
                       "rounded-xl border py-3 text-xs transition " +
-                      (form.type === "INCOME"
+                      (form.type ===
+                      "INCOME"
                         ? "border-emerald-400/20 bg-emerald-400/[0.08] text-emerald-300"
                         : "border-white/[0.07] bg-white/[0.025] text-white/35")
                     }
@@ -708,7 +1080,8 @@ export default function TransactionsClient() {
                     onChange={(event) =>
                       setForm((current) => ({
                         ...current,
-                        amount: event.target.value,
+                        amount:
+                          event.target.value,
                       }))
                     }
                     placeholder="0"
@@ -729,7 +1102,8 @@ export default function TransactionsClient() {
                   onChange={(event) =>
                     setForm((current) => ({
                       ...current,
-                      description: event.target.value,
+                      description:
+                        event.target.value,
                     }))
                   }
                   placeholder="e.g. Dinner with friends"
@@ -749,7 +1123,8 @@ export default function TransactionsClient() {
                   onChange={(event) =>
                     setForm((current) => ({
                       ...current,
-                      categoryId: event.target.value,
+                      categoryId:
+                        event.target.value,
                     }))
                   }
                   className="h-11 w-full rounded-xl border border-white/[0.07] bg-[#101214] px-4 text-xs text-white outline-none focus:border-emerald-400/30"
@@ -758,20 +1133,17 @@ export default function TransactionsClient() {
                     Select category
                   </option>
 
-                  {categories
-                    .filter((category) =>
-                      form.type === "INCOME"
-                        ? category.name === "Income"
-                        : category.name !== "Income"
-                    )
-                    .map((category) => (
+                  {formCategories.map(
+                    (category) => (
                       <option
                         key={category.id}
                         value={category.id}
                       >
-                        {category.icon} {category.name}
+                        {category.icon}{" "}
+                        {category.name}
                       </option>
-                    ))}
+                    )
+                  )}
                 </select>
               </div>
 
@@ -783,20 +1155,32 @@ export default function TransactionsClient() {
                   </label>
 
                   <select
-                    value={form.paymentMethod}
+                    value={
+                      form.paymentMethod
+                    }
                     onChange={(event) =>
                       setForm((current) => ({
                         ...current,
-                        paymentMethod: event.target.value,
+                        paymentMethod:
+                          event.target.value,
                       }))
                     }
                     className="h-11 w-full rounded-xl border border-white/[0.07] bg-[#101214] px-4 text-xs text-white outline-none focus:border-emerald-400/30"
                   >
-                    <option value="UPI">UPI</option>
-                    <option value="CARD">Card</option>
-                    <option value="CASH">Cash</option>
+                    <option value="UPI">
+                      UPI
+                    </option>
+                    <option value="CARD">
+                      Card
+                    </option>
+                    <option value="CASH">
+                      Cash
+                    </option>
                     <option value="BANK_TRANSFER">
                       Bank transfer
+                    </option>
+                    <option value="OTHER">
+                      Other
                     </option>
                   </select>
                 </div>
@@ -813,7 +1197,8 @@ export default function TransactionsClient() {
                     onChange={(event) =>
                       setForm((current) => ({
                         ...current,
-                        date: event.target.value,
+                        date:
+                          event.target.value,
                       }))
                     }
                     className="h-11 w-full rounded-xl border border-white/[0.07] bg-white/[0.025] px-4 text-xs text-white outline-none focus:border-emerald-400/30"
@@ -833,7 +1218,8 @@ export default function TransactionsClient() {
                   onChange={(event) =>
                     setForm((current) => ({
                       ...current,
-                      notes: event.target.value,
+                      notes:
+                        event.target.value,
                     }))
                   }
                   placeholder="Optional notes..."
@@ -842,7 +1228,11 @@ export default function TransactionsClient() {
               </div>
 
               <button
-                disabled={submitting}
+                disabled={
+                  submitting ||
+                  categories.length === 0 ||
+                  !form.categoryId
+                }
                 type="submit"
                 className="h-12 w-full rounded-xl bg-white text-xs font-semibold text-black transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-50"
               >
@@ -855,6 +1245,44 @@ export default function TransactionsClient() {
         </div>
       )}
     </main>
+  );
+}
+
+function DetailRow({
+  label,
+  value,
+  mono = false,
+  last = false,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+  last?: boolean;
+}) {
+  return (
+    <div
+      className={
+        "flex items-start justify-between gap-5 px-4 py-4 " +
+        (!last
+          ? "border-b border-white/[0.05]"
+          : "")
+      }
+    >
+      <span className="shrink-0 text-[10px] uppercase tracking-[0.12em] text-white/20">
+        {label}
+      </span>
+
+      <span
+        className={
+          "text-right text-xs text-white/60 " +
+          (mono
+            ? "max-w-[190px] break-all font-mono text-[9px] text-white/25"
+            : "max-w-[220px]")
+        }
+      >
+        {value}
+      </span>
+    </div>
   );
 }
 
@@ -919,6 +1347,7 @@ function FilterButton({
 }) {
   return (
     <button
+      type="button"
       onClick={onClick}
       className={
         "h-9 rounded-xl border px-3 text-[10px] transition " +

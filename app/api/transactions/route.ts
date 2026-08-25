@@ -1,54 +1,57 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
 
-const DEMO_USER_EMAIL = "demo@spendwise.app";
+import { auth } from "@/auth";
+import { prisma } from "@/lib/prisma";
 
 export async function GET() {
   try {
-    const user = await prisma.user.findUnique({
-      where: {
-        email: DEMO_USER_EMAIL,
-      },
-    });
+    const session = await auth();
 
-    if (!user) {
+    if (!session?.user?.id) {
       return NextResponse.json(
-        { error: "Demo user not found" },
-        { status: 404 }
+        { error: "Unauthorized" },
+        { status: 401 }
       );
     }
 
-    const transactions = await prisma.transaction.findMany({
-      where: {
-        userId: user.id,
-      },
-      include: {
-        category: true,
-      },
-      orderBy: {
-        date: "desc",
-      },
-    });
+    const transactions =
+      await prisma.transaction.findMany({
+        where: {
+          userId: session.user.id,
+        },
+        include: {
+          category: true,
+        },
+        orderBy: {
+          date: "desc",
+        },
+      });
 
-    const result = transactions.map((transaction) => ({
-      id: transaction.id,
-      amount: Number(transaction.amount),
-      type: transaction.type,
-      description: transaction.description,
-      date: transaction.date.toISOString(),
-      paymentMethod: transaction.paymentMethod,
-      notes: transaction.notes,
-      category: {
-        id: transaction.category.id,
-        name: transaction.category.name,
-        icon: transaction.category.icon,
-        color: transaction.category.color,
-      },
-    }));
+    const result = transactions.map(
+      (transaction) => ({
+        id: transaction.id,
+        amount: Number(transaction.amount),
+        type: transaction.type,
+        description: transaction.description,
+        date: transaction.date.toISOString(),
+        paymentMethod:
+          transaction.paymentMethod,
+        notes: transaction.notes,
+        category: {
+          id: transaction.category.id,
+          name: transaction.category.name,
+          icon: transaction.category.icon,
+          color: transaction.category.color,
+        },
+      })
+    );
 
     return NextResponse.json(result);
   } catch (error) {
-    console.error("GET /api/transactions:", error);
+    console.error(
+      "GET /api/transactions:",
+      error
+    );
 
     return NextResponse.json(
       { error: "Failed to fetch transactions" },
@@ -59,20 +62,16 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
+    const session = await auth();
 
-    const user = await prisma.user.findUnique({
-      where: {
-        email: DEMO_USER_EMAIL,
-      },
-    });
-
-    if (!user) {
+    if (!session?.user?.id) {
       return NextResponse.json(
-        { error: "Demo user not found" },
-        { status: 404 }
+        { error: "Unauthorized" },
+        { status: 401 }
       );
     }
+
+    const body = await request.json();
 
     const amount = Number(body.amount);
 
@@ -100,24 +99,40 @@ export async function POST(request: Request) {
       );
     }
 
-    const transaction = await prisma.transaction.create({
-      data: {
-        amount,
-        type: body.type,
-        description: body.description || null,
-        date: body.date
-          ? new Date(body.date)
-          : new Date(),
-        paymentMethod:
-          body.paymentMethod || "UPI",
-        notes: body.notes || null,
-        userId: user.id,
-        categoryId: body.categoryId,
-      },
-      include: {
-        category: true,
-      },
-    });
+    const category =
+      await prisma.category.findUnique({
+        where: {
+          id: body.categoryId,
+        },
+      });
+
+    if (!category) {
+      return NextResponse.json(
+        { error: "Category not found" },
+        { status: 404 }
+      );
+    }
+
+    const transaction =
+      await prisma.transaction.create({
+        data: {
+          amount,
+          type: body.type,
+          description:
+            body.description || null,
+          date: body.date
+            ? new Date(body.date)
+            : new Date(),
+          paymentMethod:
+            body.paymentMethod || "UPI",
+          notes: body.notes || null,
+          userId: session.user.id,
+          categoryId: body.categoryId,
+        },
+        include: {
+          category: true,
+        },
+      });
 
     return NextResponse.json(
       {
@@ -126,7 +141,8 @@ export async function POST(request: Request) {
         type: transaction.type,
         description: transaction.description,
         date: transaction.date.toISOString(),
-        paymentMethod: transaction.paymentMethod,
+        paymentMethod:
+          transaction.paymentMethod,
         notes: transaction.notes,
         category: {
           id: transaction.category.id,
@@ -138,7 +154,10 @@ export async function POST(request: Request) {
       { status: 201 }
     );
   } catch (error) {
-    console.error("POST /api/transactions:", error);
+    console.error(
+      "POST /api/transactions:",
+      error
+    );
 
     return NextResponse.json(
       { error: "Failed to create transaction" },
@@ -149,6 +168,15 @@ export async function POST(request: Request) {
 
 export async function DELETE(request: Request) {
   try {
+    const session = await auth();
+
+    if (!session?.user?.id) {
+      return NextResponse.json(
+        { error: "Unauthorized" },
+        { status: 401 }
+      );
+    }
+
     const body = await request.json();
 
     if (!body.id) {
@@ -158,24 +186,11 @@ export async function DELETE(request: Request) {
       );
     }
 
-    const user = await prisma.user.findUnique({
-      where: {
-        email: DEMO_USER_EMAIL,
-      },
-    });
-
-    if (!user) {
-      return NextResponse.json(
-        { error: "Demo user not found" },
-        { status: 404 }
-      );
-    }
-
     const transaction =
       await prisma.transaction.findFirst({
         where: {
           id: body.id,
-          userId: user.id,
+          userId: session.user.id,
         },
       });
 
@@ -196,7 +211,10 @@ export async function DELETE(request: Request) {
       success: true,
     });
   } catch (error) {
-    console.error("DELETE /api/transactions:", error);
+    console.error(
+      "DELETE /api/transactions:",
+      error
+    );
 
     return NextResponse.json(
       { error: "Failed to delete transaction" },

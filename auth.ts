@@ -15,6 +15,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           type: "email",
           placeholder: "you@example.com",
         },
+
         password: {
           label: "Password",
           type: "password",
@@ -38,25 +39,42 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         );
 
         const user = await prisma.user.findUnique({
-          where: {
-            email,
-          },
-        });
+  where: {
+    email,
+  },
+});
 
-        if (!user || !user.password) {
-          return null;
-        }
+console.log("AUTH DEBUG - user found:", !!user);
+console.log(
+  "AUTH DEBUG - password exists:",
+  !!user?.password
+);
 
-        const passwordValid =
-          await bcrypt.compare(
-            password,
-            user.password
-          );
+if (!user || !user.password) {
+  console.log("AUTH DEBUG - returning null: user/password missing");
+  return null;
+}
 
-        if (!passwordValid) {
-          return null;
-        }
+const passwordValid = await bcrypt.compare(
+  password,
+  user.password
+);
 
+console.log(
+  "AUTH DEBUG - password valid:",
+  passwordValid
+);
+
+if (!passwordValid) {
+  console.log("AUTH DEBUG - returning null: invalid password");
+  return null;
+}
+
+console.log(
+  "AUTH DEBUG - SUCCESS:",
+  user.email,
+  user.id
+);
         return {
           id: user.id,
           email: user.email,
@@ -76,7 +94,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
 
   callbacks: {
     async jwt({ token, user }) {
-      if (user) {
+      if (user?.id) {
         token.id = user.id;
       }
 

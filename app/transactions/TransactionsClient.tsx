@@ -31,14 +31,11 @@ type TransactionForm = {
 };
 
 export default function TransactionsClient() {
-  const [transactions, setTransactions] = useState<
-    Transaction[]
-  >([]);
-  const [categories, setCategories] = useState<Category[]>(
-    []
-  );
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
 
   const [loading, setLoading] = useState(true);
+  const [categoriesLoading, setCategoriesLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
@@ -46,18 +43,14 @@ export default function TransactionsClient() {
   const [typeFilter, setTypeFilter] = useState<
     "ALL" | "EXPENSE" | "INCOME"
   >("ALL");
-  const [categoryFilter, setCategoryFilter] =
-    useState("ALL");
+  const [categoryFilter, setCategoryFilter] = useState("ALL");
 
   const [modalOpen, setModalOpen] = useState(false);
 
-  // NEW: selected transaction for detail modal
   const [selectedTransaction, setSelectedTransaction] =
     useState<Transaction | null>(null);
 
-  const today = new Date()
-    .toISOString()
-    .slice(0, 10);
+  const today = new Date().toISOString().slice(0, 10);
 
   const [form, setForm] = useState<TransactionForm>({
     amount: "",
@@ -69,56 +62,132 @@ export default function TransactionsClient() {
     notes: "",
   });
 
+  /*
+   * -------------------------------------------------------
+   * FETCH TRANSACTIONS + CATEGORIES
+   * -------------------------------------------------------
+   */
+
   const fetchTransactions = async () => {
     try {
       setLoading(true);
+      setCategoriesLoading(true);
       setError("");
 
-      const [
-        transactionsResponse,
-        categoriesResponse,
-      ] = await Promise.all([
-        fetch("/api/transactions", {
-          cache: "no-store",
-        }),
-        fetch("/api/categories", {
-          cache: "no-store",
-        }),
-      ]);
+      const [transactionsResponse, categoriesResponse] =
+        await Promise.all([
+          fetch("/api/transactions", {
+            method: "GET",
+            cache: "no-store",
+            headers: {
+              Accept: "application/json",
+            },
+          }),
 
-      const transactionsResult =
-        await transactionsResponse.json();
+          fetch("/api/categories", {
+            method: "GET",
+            cache: "no-store",
+            headers: {
+              Accept: "application/json",
+            },
+          }),
+        ]);
 
-      const categoriesResult =
-        await categoriesResponse.json();
+      let transactionsResult: unknown = null;
+      let categoriesResult: unknown = null;
+
+      try {
+        transactionsResult = await transactionsResponse.json();
+      } catch {
+        transactionsResult = null;
+      }
+
+      try {
+        categoriesResult = await categoriesResponse.json();
+      } catch {
+        categoriesResult = null;
+      }
 
       if (!transactionsResponse.ok) {
-        throw new Error(
-          transactionsResult?.error ||
-            "Failed to load transactions"
-        );
+        const message =
+          typeof transactionsResult === "object" &&
+          transactionsResult !== null &&
+          "error" in transactionsResult
+            ? String(
+                (transactionsResult as { error?: unknown }).error
+              )
+            : `Failed to load transactions (${transactionsResponse.status})`;
+
+        throw new Error(message);
       }
 
       if (!categoriesResponse.ok) {
-        throw new Error(
-          categoriesResult?.error ||
-            "Failed to load categories"
-        );
+        const message =
+          typeof categoriesResult === "object" &&
+          categoriesResult !== null &&
+          "error" in categoriesResult
+            ? String(
+                (categoriesResult as { error?: unknown }).error
+              )
+            : `Failed to load categories (${categoriesResponse.status})`;
+
+        throw new Error(message);
       }
 
-      setTransactions(
-        Array.isArray(transactionsResult)
-          ? transactionsResult
-          : []
-      );
+      const safeTransactions = Array.isArray(transactionsResult)
+        ? (transactionsResult as Transaction[])
+        : [];
 
-      setCategories(
-        Array.isArray(categoriesResult)
-          ? categoriesResult
-          : []
-      );
+      const safeCategories = Array.isArray(categoriesResult)
+        ? (categoriesResult as Category[])
+        : [];
+
+      setTransactions(safeTransactions);
+      setCategories(safeCategories);
+
+      /*
+       * If current category is empty/invalid,
+       * automatically select a valid category.
+       */
+      setForm((current) => {
+        const currentCategoryExists = safeCategories.some(
+          (category) => category.id === current.categoryId
+        );
+
+        if (currentCategoryExists) {
+          return current;
+        }
+
+        const expenseCategory =
+          safeCategories.find(
+            (category) => category.name === "Food & Drinks"
+          )?.id;
+
+        const firstExpenseCategory =
+          safeCategories.find(
+            (category) => category.name !== "Income"
+          )?.id;
+
+        const incomeCategory =
+          safeCategories.find(
+            (category) => category.name === "Income"
+          )?.id;
+
+        const fallbackCategory =
+          current.type === "INCOME"
+            ? incomeCategory || ""
+            : expenseCategory ||
+              firstExpenseCategory ||
+              safeCategories[0]?.id ||
+              "";
+
+        return {
+          ...current,
+          categoryId: fallbackCategory,
+        };
+      });
     } catch (err) {
-      console.error(err);
+      console.error("FETCH TRANSACTIONS ERROR:", err);
 
       setError(
         err instanceof Error
@@ -127,6 +196,7 @@ export default function TransactionsClient() {
       );
     } finally {
       setLoading(false);
+      setCategoriesLoading(false);
     }
   };
 
@@ -134,11 +204,15 @@ export default function TransactionsClient() {
     fetchTransactions();
   }, []);
 
+  /*
+   * -------------------------------------------------------
+   * FILTERED TRANSACTIONS
+   * -------------------------------------------------------
+   */
+
   const filteredTransactions = useMemo(() => {
     return transactions.filter((transaction) => {
-      const query = search
-        .toLowerCase()
-        .trim();
+      const query = search.toLowerCase().trim();
 
       const matchesSearch =
         !query ||
@@ -147,6 +221,9 @@ export default function TransactionsClient() {
           .includes(query) ||
         transaction.category.name
           .toLowerCase()
+          .includes(query) ||
+        transaction.paymentMethod
+          ?.toLowerCase()
           .includes(query);
 
       const matchesType =
@@ -155,8 +232,7 @@ export default function TransactionsClient() {
 
       const matchesCategory =
         categoryFilter === "ALL" ||
-        transaction.category.id ===
-          categoryFilter;
+        transaction.category.id === categoryFilter;
 
       return (
         Boolean(matchesSearch) &&
@@ -171,67 +247,97 @@ export default function TransactionsClient() {
     categoryFilter,
   ]);
 
+  /*
+   * -------------------------------------------------------
+   * SUMMARY
+   * -------------------------------------------------------
+   */
+
   const totalIncome = transactions
     .filter(
-      (transaction) =>
-        transaction.type === "INCOME"
+      (transaction) => transaction.type === "INCOME"
     )
     .reduce(
-      (sum, transaction) =>
-        sum + transaction.amount,
+      (sum, transaction) => sum + Number(transaction.amount),
       0
     );
 
   const totalExpense = transactions
     .filter(
-      (transaction) =>
-        transaction.type === "EXPENSE"
+      (transaction) => transaction.type === "EXPENSE"
     )
     .reduce(
-      (sum, transaction) =>
-        sum + transaction.amount,
+      (sum, transaction) => sum + Number(transaction.amount),
       0
     );
 
   const balance = totalIncome - totalExpense;
+
+  /*
+   * -------------------------------------------------------
+   * FORMATTERS
+   * -------------------------------------------------------
+   */
 
   const formatCurrency = (value: number) =>
     new Intl.NumberFormat("en-IN", {
       style: "currency",
       currency: "INR",
       maximumFractionDigits: 0,
-    }).format(value);
+    }).format(Number(value) || 0);
 
-  const formatDate = (value: string) =>
-    new Date(value).toLocaleDateString(
-      "en-IN",
-      {
-        day: "2-digit",
-        month: "short",
-        year: "numeric",
-      }
-    );
+  const formatDate = (value: string) => {
+    const date = new Date(value);
 
-  const formatDateTime = (value: string) =>
-    new Date(value).toLocaleString("en-IN", {
+    if (Number.isNaN(date.getTime())) {
+      return value;
+    }
+
+    return date.toLocaleDateString("en-IN", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    });
+  };
+
+  const formatDateTime = (value: string) => {
+    const date = new Date(value);
+
+    if (Number.isNaN(date.getTime())) {
+      return value;
+    }
+
+    return date.toLocaleString("en-IN", {
       day: "2-digit",
       month: "short",
       year: "numeric",
       hour: "2-digit",
       minute: "2-digit",
     });
+  };
+
+  /*
+   * -------------------------------------------------------
+   * OPEN ADD MODAL
+   * -------------------------------------------------------
+   */
 
   const openModal = () => {
+    if (categories.length === 0) {
+      setError(
+        "No categories are available. Please refresh the page and try again."
+      );
+      return;
+    }
+
     const expenseCategory =
       categories.find(
-        (category) =>
-          category.name === "Food & Drinks"
+        (category) => category.name === "Food & Drinks"
       )?.id;
 
     const firstExpenseCategory =
       categories.find(
-        (category) =>
-          category.name !== "Income"
+        (category) => category.name !== "Income"
       )?.id;
 
     setForm({
@@ -244,9 +350,7 @@ export default function TransactionsClient() {
         categories[0]?.id ||
         "",
       paymentMethod: "UPI",
-      date: new Date()
-        .toISOString()
-        .slice(0, 10),
+      date: new Date().toISOString().slice(0, 10),
       notes: "",
     });
 
@@ -254,34 +358,66 @@ export default function TransactionsClient() {
     setModalOpen(true);
   };
 
+  /*
+   * -------------------------------------------------------
+   * CREATE TRANSACTION
+   * -------------------------------------------------------
+   */
+
   const handleCreateTransaction = async (
     event: FormEvent<HTMLFormElement>
   ) => {
     event.preventDefault();
 
-    if (
-      !form.amount ||
-      Number(form.amount) <= 0
-    ) {
+    if (submitting) {
+      return;
+    }
+
+    const amount = Number(form.amount);
+
+    if (!form.amount || !Number.isFinite(amount) || amount <= 0) {
       setError("Enter a valid amount.");
       return;
     }
 
     if (!form.categoryId) {
-      setError("Select a category.");
+      setError("Please select a category.");
       return;
     }
 
-    const selectedCategory =
-      categories.find(
-        (category) =>
-          category.id === form.categoryId
-      );
+    if (!form.date) {
+      setError("Please select a date.");
+      return;
+    }
+
+    const selectedCategory = categories.find(
+      (category) => category.id === form.categoryId
+    );
 
     if (!selectedCategory) {
       setError(
-        "Selected category is no longer available. Please reopen the form."
+        "Selected category is not available. Please select another category."
       );
+      return;
+    }
+
+    /*
+     * Prevent Income category being used for an expense
+     * and vice versa.
+     */
+    if (
+      form.type === "INCOME" &&
+      selectedCategory.name !== "Income"
+    ) {
+      setError("Please select the Income category.");
+      return;
+    }
+
+    if (
+      form.type === "EXPENSE" &&
+      selectedCategory.name === "Income"
+    ) {
+      setError("Please select an expense category.");
       return;
     }
 
@@ -289,51 +425,86 @@ export default function TransactionsClient() {
       setSubmitting(true);
       setError("");
 
-      const response = await fetch(
-        "/api/transactions",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            amount: Number(form.amount),
-            type: form.type,
-            description:
-              form.description.trim() ||
-              null,
-            categoryId:
-              selectedCategory.id,
-            paymentMethod:
-              form.paymentMethod,
-            date: form.date,
-            notes:
-              form.notes.trim() || null,
-          }),
-        }
-      );
+      const payload = {
+        amount,
+        type: form.type,
+        description: form.description.trim() || null,
+        categoryId: selectedCategory.id,
+        paymentMethod: form.paymentMethod,
+        date: form.date,
+        notes: form.notes.trim() || null,
+      };
 
-      const result = await response.json();
+      console.log("CREATING TRANSACTION:", payload);
 
-      if (!response.ok) {
-        throw new Error(
-          result?.error ||
-            "Failed to create transaction"
-        );
+      const response = await fetch("/api/transactions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      let result: unknown = null;
+
+      try {
+        result = await response.json();
+      } catch {
+        result = null;
       }
 
-      if (result?.id) {
+      console.log("CREATE TRANSACTION RESPONSE:", {
+        status: response.status,
+        ok: response.ok,
+        result,
+      });
+
+      if (!response.ok) {
+        const message =
+          typeof result === "object" &&
+          result !== null &&
+          "error" in result
+            ? String(
+                (result as { error?: unknown }).error
+              )
+            : `Failed to create transaction (${response.status})`;
+
+        throw new Error(message);
+      }
+
+      /*
+       * API should return the created transaction.
+       */
+      if (
+        typeof result === "object" &&
+        result !== null &&
+        "id" in result
+      ) {
+        const createdTransaction =
+          result as Transaction;
+
         setTransactions((current) => [
-          result,
+          createdTransaction,
           ...current,
         ]);
       }
 
+      /*
+       * Close modal only after successful API request.
+       */
       setModalOpen(false);
 
+      /*
+       * Refresh from database so UI and database
+       * remain perfectly synchronized.
+       */
       await fetchTransactions();
     } catch (err) {
-      console.error(err);
+      console.error(
+        "CREATE TRANSACTION ERROR:",
+        err
+      );
 
       setError(
         err instanceof Error
@@ -344,6 +515,12 @@ export default function TransactionsClient() {
       setSubmitting(false);
     }
   };
+
+  /*
+   * -------------------------------------------------------
+   * DELETE TRANSACTION
+   * -------------------------------------------------------
+   */
 
   const handleDelete = async (id: string) => {
     const confirmed = window.confirm(
@@ -357,38 +534,48 @@ export default function TransactionsClient() {
     try {
       setError("");
 
-      const response = await fetch(
-        "/api/transactions",
-        {
-          method: "DELETE",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ id }),
-        }
-      );
+      const response = await fetch("/api/transactions", {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({ id }),
+      });
 
-      const result = await response.json();
+      let result: unknown = null;
+
+      try {
+        result = await response.json();
+      } catch {
+        result = null;
+      }
 
       if (!response.ok) {
-        throw new Error(
-          result?.error ||
-            "Failed to delete transaction"
-        );
+        const message =
+          typeof result === "object" &&
+          result !== null &&
+          "error" in result
+            ? String(
+                (result as { error?: unknown }).error
+              )
+            : `Failed to delete transaction (${response.status})`;
+
+        throw new Error(message);
       }
 
       setTransactions((current) =>
         current.filter(
-          (transaction) =>
-            transaction.id !== id
+          (transaction) => transaction.id !== id
         )
       );
 
-      // Close detail modal if the deleted
-      // transaction was open.
       setSelectedTransaction(null);
     } catch (err) {
-      console.error(err);
+      console.error(
+        "DELETE TRANSACTION ERROR:",
+        err
+      );
 
       setError(
         err instanceof Error
@@ -398,12 +585,54 @@ export default function TransactionsClient() {
     }
   };
 
+  /*
+   * -------------------------------------------------------
+   * FORM CATEGORIES
+   * -------------------------------------------------------
+   */
+
   const formCategories = categories.filter(
     (category) =>
       form.type === "INCOME"
         ? category.name === "Income"
         : category.name !== "Income"
   );
+
+  /*
+   * -------------------------------------------------------
+   * TYPE CHANGE
+   * -------------------------------------------------------
+   */
+
+  const handleTypeChange = (
+    type: "EXPENSE" | "INCOME"
+  ) => {
+    const category =
+      type === "INCOME"
+        ? categories.find(
+            (item) => item.name === "Income"
+          )
+        : categories.find(
+            (item) => item.name === "Food & Drinks"
+          ) ||
+          categories.find(
+            (item) => item.name !== "Income"
+          );
+
+    setForm((current) => ({
+      ...current,
+      type,
+      categoryId: category?.id || "",
+    }));
+
+    setError("");
+  };
+
+  /*
+   * -------------------------------------------------------
+   * RENDER
+   * -------------------------------------------------------
+   */
 
   return (
     <main className="min-h-screen bg-[#08090b] text-white">
@@ -451,14 +680,14 @@ export default function TransactionsClient() {
             </a>
 
             <button
+              type="button"
               onClick={openModal}
-              disabled={
-                loading ||
-                categories.length === 0
-              }
+              disabled={loading || categoriesLoading}
               className="rounded-xl bg-white px-4 py-2 text-xs font-semibold text-black transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              + Add transaction
+              {categoriesLoading
+                ? "Loading..."
+                : "+ Add transaction"}
             </button>
           </div>
         </div>
@@ -505,9 +734,7 @@ export default function TransactionsClient() {
 
           <SummaryCard
             label="Transactions"
-            value={String(
-              transactions.length
-            )}
+            value={String(transactions.length)}
             icon="↔"
           />
         </section>
@@ -523,9 +750,7 @@ export default function TransactionsClient() {
               <input
                 value={search}
                 onChange={(event) =>
-                  setSearch(
-                    event.target.value
-                  )
+                  setSearch(event.target.value)
                 }
                 placeholder="Search transactions..."
                 className="h-11 w-full rounded-xl border border-white/[0.07] bg-white/[0.025] pl-10 pr-4 text-xs text-white outline-none placeholder:text-white/20 focus:border-emerald-400/30"
@@ -535,17 +760,13 @@ export default function TransactionsClient() {
             <div className="flex flex-wrap gap-2">
               <FilterButton
                 active={typeFilter === "ALL"}
-                onClick={() =>
-                  setTypeFilter("ALL")
-                }
+                onClick={() => setTypeFilter("ALL")}
               >
                 All
               </FilterButton>
 
               <FilterButton
-                active={
-                  typeFilter === "EXPENSE"
-                }
+                active={typeFilter === "EXPENSE"}
                 onClick={() =>
                   setTypeFilter("EXPENSE")
                 }
@@ -554,9 +775,7 @@ export default function TransactionsClient() {
               </FilterButton>
 
               <FilterButton
-                active={
-                  typeFilter === "INCOME"
-                }
+                active={typeFilter === "INCOME"}
                 onClick={() =>
                   setTypeFilter("INCOME")
                 }
@@ -577,16 +796,14 @@ export default function TransactionsClient() {
                   All categories
                 </option>
 
-                {categories.map(
-                  (category) => (
-                    <option
-                      key={category.id}
-                      value={category.id}
-                    >
-                      {category.name}
-                    </option>
-                  )
-                )}
+                {categories.map((category) => (
+                  <option
+                    key={category.id}
+                    value={category.id}
+                  >
+                    {category.name}
+                  </option>
+                ))}
               </select>
             </div>
           </div>
@@ -594,8 +811,16 @@ export default function TransactionsClient() {
 
         {/* Error */}
         {error && (
-          <div className="mt-4 rounded-2xl border border-red-400/10 bg-red-400/[0.05] px-4 py-3 text-xs text-red-300">
-            {error}
+          <div className="mt-4 flex items-start justify-between gap-4 rounded-2xl border border-red-400/10 bg-red-400/[0.05] px-4 py-3 text-xs text-red-300">
+            <span>{error}</span>
+
+            <button
+              type="button"
+              onClick={() => setError("")}
+              className="shrink-0 text-red-300/50 hover:text-red-300"
+            >
+              ×
+            </button>
           </div>
         )}
 
@@ -608,12 +833,8 @@ export default function TransactionsClient() {
               </p>
 
               <p className="mt-1 text-xs text-white/25">
-                {
-                  filteredTransactions.length
-                }{" "}
-                result
-                {filteredTransactions.length ===
-                1
+                {filteredTransactions.length} result
+                {filteredTransactions.length === 1
                   ? ""
                   : "s"}
               </p>
@@ -632,8 +853,7 @@ export default function TransactionsClient() {
                 Loading transactions...
               </p>
             </div>
-          ) : filteredTransactions.length ===
-            0 ? (
+          ) : filteredTransactions.length === 0 ? (
             <div className="px-6 py-20 text-center">
               <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border border-white/[0.07] bg-white/[0.025] text-xl">
                 ◇
@@ -644,13 +864,16 @@ export default function TransactionsClient() {
               </h3>
 
               <p className="mt-2 text-xs text-white/25">
-                Try changing your filters or
-                add a new transaction.
+                Try changing your filters or add a new
+                transaction.
               </p>
 
               <button
+                type="button"
                 onClick={openModal}
                 disabled={
+                  loading ||
+                  categoriesLoading ||
                   categories.length === 0
                 }
                 className="mt-5 rounded-xl bg-white px-4 py-2.5 text-xs font-semibold text-black hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-50"
@@ -663,8 +886,7 @@ export default function TransactionsClient() {
               {filteredTransactions.map(
                 (transaction) => {
                   const isIncome =
-                    transaction.type ===
-                    "INCOME";
+                    transaction.type === "INCOME";
 
                   return (
                     <button
@@ -682,31 +904,24 @@ export default function TransactionsClient() {
                           className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white/[0.045] text-lg"
                           style={{
                             border:
-                              transaction
-                                .category
-                                .color
-                              ? `1px solid ${transaction.category.color}25`
-                              : undefined,
+                              transaction.category.color
+                                ? `1px solid ${transaction.category.color}25`
+                                : undefined,
                           }}
                         >
-                          {transaction.category
-                            .icon || "◈"}
+                          {transaction.category.icon ||
+                            "◈"}
                         </div>
 
                         <div className="min-w-0">
                           <p className="truncate text-xs font-medium text-white">
                             {transaction.description ||
-                              transaction.category
-                                .name}
+                              transaction.category.name}
                           </p>
 
                           <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[10px] text-white/25">
                             <span>
-                              {
-                                transaction
-                                  .category
-                                  .name
-                              }
+                              {transaction.category.name}
                             </span>
 
                             <span className="text-white/10">
@@ -714,9 +929,7 @@ export default function TransactionsClient() {
                             </span>
 
                             <span>
-                              {
-                                transaction.paymentMethod
-                              }
+                              {transaction.paymentMethod}
                             </span>
 
                             <span className="text-white/10">
@@ -742,11 +955,11 @@ export default function TransactionsClient() {
                                 : "text-white/75")
                             }
                           >
-                            {isIncome
-                              ? "+"
-                              : "-"}
+                            {isIncome ? "+" : "-"}
                             {formatCurrency(
-                              transaction.amount
+                              Number(
+                                transaction.amount
+                              )
                             )}
                           </p>
 
@@ -778,7 +991,7 @@ export default function TransactionsClient() {
       </div>
 
       {/* ================================================= */}
-      {/* TRANSACTION DETAIL MODAL                          */}
+      {/* TRANSACTION DETAIL MODAL */}
       {/* ================================================= */}
 
       {selectedTransaction && (
@@ -791,7 +1004,6 @@ export default function TransactionsClient() {
           />
 
           <div className="relative w-full max-w-md overflow-hidden rounded-3xl border border-white/[0.08] bg-[#0d0f11] shadow-2xl">
-            {/* Modal header */}
             <div className="border-b border-white/[0.06] px-6 py-5">
               <div className="flex items-start justify-between">
                 <div>
@@ -809,9 +1021,7 @@ export default function TransactionsClient() {
                 <button
                   type="button"
                   onClick={() =>
-                    setSelectedTransaction(
-                      null
-                    )
+                    setSelectedTransaction(null)
                   }
                   className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/[0.06] text-white/30 transition hover:bg-white/[0.04] hover:text-white"
                 >
@@ -820,25 +1030,22 @@ export default function TransactionsClient() {
               </div>
             </div>
 
-            {/* Amount */}
             <div className="px-6 py-7 text-center">
               <div
                 className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl text-2xl"
                 style={{
                   backgroundColor:
-                    selectedTransaction.category
-                      .color
+                    selectedTransaction.category.color
                       ? `${selectedTransaction.category.color}12`
                       : "rgba(255,255,255,0.04)",
                   border:
-                    selectedTransaction.category
-                      .color
+                    selectedTransaction.category.color
                       ? `1px solid ${selectedTransaction.category.color}25`
                       : "1px solid rgba(255,255,255,0.06)",
                 }}
               >
-                {selectedTransaction.category
-                  .icon || "◈"}
+                {selectedTransaction.category.icon ||
+                  "◈"}
               </div>
 
               <p
@@ -850,24 +1057,23 @@ export default function TransactionsClient() {
                     : "text-white")
                 }
               >
-                {selectedTransaction.type ===
-                "INCOME"
+                {selectedTransaction.type === "INCOME"
                   ? "+"
                   : "-"}
                 {formatCurrency(
-                  selectedTransaction.amount
+                  Number(
+                    selectedTransaction.amount
+                  )
                 )}
               </p>
 
               <p className="mt-2 text-sm text-white/40">
-                {selectedTransaction.type ===
-                "INCOME"
+                {selectedTransaction.type === "INCOME"
                   ? "Income"
                   : "Expense"}
               </p>
             </div>
 
-            {/* Details */}
             <div className="px-6 pb-6">
               <div className="overflow-hidden rounded-2xl border border-white/[0.06] bg-white/[0.02]">
                 <DetailRow
@@ -901,30 +1107,23 @@ export default function TransactionsClient() {
                   label="Transaction ID"
                   value={selectedTransaction.id}
                   mono
-                  last={
-                    !selectedTransaction.notes
-                  }
+                  last={!selectedTransaction.notes}
                 />
 
                 {selectedTransaction.notes && (
                   <DetailRow
                     label="Notes"
-                    value={
-                      selectedTransaction.notes
-                    }
+                    value={selectedTransaction.notes}
                     last
                   />
                 )}
               </div>
 
-              {/* Actions */}
               <div className="mt-5 flex gap-2">
                 <button
                   type="button"
                   onClick={() =>
-                    setSelectedTransaction(
-                      null
-                    )
+                    setSelectedTransaction(null)
                   }
                   className="flex-1 rounded-xl border border-white/[0.07] bg-white/[0.025] py-3 text-xs font-medium text-white/50 transition hover:bg-white/[0.05] hover:text-white"
                 >
@@ -949,7 +1148,7 @@ export default function TransactionsClient() {
       )}
 
       {/* ================================================= */}
-      {/* ADD TRANSACTION MODAL                             */}
+      {/* ADD TRANSACTION MODAL */}
       {/* ================================================= */}
 
       {modalOpen && (
@@ -975,17 +1174,17 @@ export default function TransactionsClient() {
                 </h2>
 
                 <p className="mt-1 text-xs text-white/25">
-                  Record your latest financial
-                  activity.
+                  Record your latest financial activity.
                 </p>
               </div>
 
               <button
+                type="button"
                 disabled={submitting}
                 onClick={() =>
                   setModalOpen(false)
                 }
-                className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/[0.06] text-white/30 hover:bg-white/[0.04] hover:text-white"
+                className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/[0.06] text-white/30 hover:bg-white/[0.04] hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
               >
                 ×
               </button>
@@ -1005,27 +1204,11 @@ export default function TransactionsClient() {
                   <button
                     type="button"
                     onClick={() =>
-                      setForm((current) => ({
-                        ...current,
-                        type: "EXPENSE",
-                        categoryId:
-                          categories.find(
-                            (category) =>
-                              category.name ===
-                              "Food & Drinks"
-                          )?.id ||
-                          categories.find(
-                            (category) =>
-                              category.name !==
-                              "Income"
-                          )?.id ||
-                          "",
-                      }))
+                      handleTypeChange("EXPENSE")
                     }
                     className={
                       "rounded-xl border py-3 text-xs transition " +
-                      (form.type ===
-                      "EXPENSE"
+                      (form.type === "EXPENSE"
                         ? "border-red-400/20 bg-red-400/[0.08] text-red-300"
                         : "border-white/[0.07] bg-white/[0.025] text-white/35")
                     }
@@ -1036,21 +1219,11 @@ export default function TransactionsClient() {
                   <button
                     type="button"
                     onClick={() =>
-                      setForm((current) => ({
-                        ...current,
-                        type: "INCOME",
-                        categoryId:
-                          categories.find(
-                            (category) =>
-                              category.name ===
-                              "Income"
-                          )?.id || "",
-                      }))
+                      handleTypeChange("INCOME")
                     }
                     className={
                       "rounded-xl border py-3 text-xs transition " +
-                      (form.type ===
-                      "INCOME"
+                      (form.type === "INCOME"
                         ? "border-emerald-400/20 bg-emerald-400/[0.08] text-emerald-300"
                         : "border-white/[0.07] bg-white/[0.025] text-white/35")
                     }
@@ -1074,7 +1247,7 @@ export default function TransactionsClient() {
                   <input
                     required
                     type="number"
-                    min="1"
+                    min="0.01"
                     step="0.01"
                     value={form.amount}
                     onChange={(event) =>
@@ -1145,6 +1318,13 @@ export default function TransactionsClient() {
                     )
                   )}
                 </select>
+
+                {formCategories.length === 0 && (
+                  <p className="mt-2 text-[10px] text-red-300">
+                    No category available for this
+                    transaction type.
+                  </p>
+                )}
               </div>
 
               {/* Payment + Date */}
@@ -1155,9 +1335,7 @@ export default function TransactionsClient() {
                   </label>
 
                   <select
-                    value={
-                      form.paymentMethod
-                    }
+                    value={form.paymentMethod}
                     onChange={(event) =>
                       setForm((current) => ({
                         ...current,
@@ -1170,15 +1348,19 @@ export default function TransactionsClient() {
                     <option value="UPI">
                       UPI
                     </option>
+
                     <option value="CARD">
                       Card
                     </option>
+
                     <option value="CASH">
                       Cash
                     </option>
+
                     <option value="BANK_TRANSFER">
                       Bank transfer
                     </option>
+
                     <option value="OTHER">
                       Other
                     </option>
@@ -1227,13 +1409,13 @@ export default function TransactionsClient() {
                 />
               </div>
 
+              {/* Submit */}
               <button
+                type="submit"
                 disabled={
                   submitting ||
-                  categories.length === 0 ||
-                  !form.categoryId
+                  categoriesLoading
                 }
-                type="submit"
                 className="h-12 w-full rounded-xl bg-white text-xs font-semibold text-black transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {submitting
@@ -1247,6 +1429,12 @@ export default function TransactionsClient() {
     </main>
   );
 }
+
+/*
+ * -------------------------------------------------------
+ * DETAIL ROW
+ * -------------------------------------------------------
+ */
 
 function DetailRow({
   label,
@@ -1285,6 +1473,12 @@ function DetailRow({
     </div>
   );
 }
+
+/*
+ * -------------------------------------------------------
+ * SUMMARY CARD
+ * -------------------------------------------------------
+ */
 
 function SummaryCard({
   label,
@@ -1335,6 +1529,12 @@ function SummaryCard({
     </div>
   );
 }
+
+/*
+ * -------------------------------------------------------
+ * FILTER BUTTON
+ * -------------------------------------------------------
+ */
 
 function FilterButton({
   active,

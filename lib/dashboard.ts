@@ -18,6 +18,45 @@ export async function getDashboardData() {
     throw new Error("User not found");
   }
 
+  const now = new Date();
+
+  /*
+   * -------------------------------------------------------
+   * CURRENT MONTH RANGE
+   * -------------------------------------------------------
+   */
+
+  const currentMonthStart = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    1,
+    0,
+    0,
+    0,
+    0
+  );
+
+  const nextMonthStart = new Date(
+    now.getFullYear(),
+    now.getMonth() + 1,
+    1,
+    0,
+    0,
+    0,
+    0
+  );
+
+  /*
+   * -------------------------------------------------------
+   * TRANSACTIONS
+   *
+   * We fetch all transactions because:
+   * - recent transactions need the latest records
+   * - balance/income/expenses need current-month records
+   * - weekly spending needs the last 7 days
+   * -------------------------------------------------------
+   */
+
   const transactions = await prisma.transaction.findMany({
     where: {
       userId: user.id,
@@ -30,29 +69,25 @@ export async function getDashboardData() {
     },
   });
 
-  const now = new Date();
+  /*
+   * -------------------------------------------------------
+   * CURRENT MONTH TRANSACTIONS
+   * -------------------------------------------------------
+   */
 
-  const budgets = await prisma.budget.findMany({
-    where: {
-      userId: user.id,
-      month: now.getMonth() + 1,
-      year: now.getFullYear(),
-    },
-    include: {
-      category: true,
-    },
-  });
+  const currentMonthTransactions = transactions.filter(
+    (transaction) =>
+      transaction.date >= currentMonthStart &&
+      transaction.date < nextMonthStart
+  );
 
-  const goals = await prisma.goal.findMany({
-    where: {
-      userId: user.id,
-    },
-    orderBy: {
-      createdAt: "desc",
-    },
-  });
+  /*
+   * -------------------------------------------------------
+   * CURRENT MONTH INCOME
+   * -------------------------------------------------------
+   */
 
-  const income = transactions
+  const income = currentMonthTransactions
     .filter(
       (transaction) =>
         transaction.type === "INCOME"
@@ -63,7 +98,13 @@ export async function getDashboardData() {
       0
     );
 
-  const expenses = transactions
+  /*
+   * -------------------------------------------------------
+   * CURRENT MONTH EXPENSES
+   * -------------------------------------------------------
+   */
+
+  const expenses = currentMonthTransactions
     .filter(
       (transaction) =>
         transaction.type === "EXPENSE"
@@ -74,13 +115,33 @@ export async function getDashboardData() {
       0
     );
 
+  /*
+   * -------------------------------------------------------
+   * CURRENT MONTH BALANCE
+   * -------------------------------------------------------
+   */
+
   const balance = income - expenses;
 
+  /*
+   * -------------------------------------------------------
+   * SAVINGS RATE
+   * -------------------------------------------------------
+   */
+
   const savingsRate =
-    income > 0 ? (balance / income) * 100 : 0;
+    income > 0
+      ? (balance / income) * 100
+      : 0;
+
+  /*
+   * -------------------------------------------------------
+   * CURRENT MONTH CATEGORY SPENDING
+   * -------------------------------------------------------
+   */
 
   const categorySpending =
-    transactions
+    currentMonthTransactions
       .filter(
         (transaction) =>
           transaction.type === "EXPENSE"
@@ -99,22 +160,40 @@ export async function getDashboardData() {
         {}
       );
 
+  /*
+   * -------------------------------------------------------
+   * LAST 7 DAYS SPENDING
+   * -------------------------------------------------------
+   *
+   * Includes today + previous 6 days.
+   */
+
   const weeklySpending = Array.from(
     { length: 7 },
     (_, index) => {
-      const date = new Date();
+      const date = new Date(now);
 
       date.setDate(
-        date.getDate() - (6 - index)
+        now.getDate() - (6 - index)
       );
 
       const dayStart = new Date(date);
 
-      dayStart.setHours(0, 0, 0, 0);
+      dayStart.setHours(
+        0,
+        0,
+        0,
+        0
+      );
 
       const dayEnd = new Date(date);
 
-      dayEnd.setHours(23, 59, 59, 999);
+      dayEnd.setHours(
+        23,
+        59,
+        59,
+        999
+      );
 
       const amount = transactions
         .filter(
@@ -125,7 +204,8 @@ export async function getDashboardData() {
         )
         .reduce(
           (total, transaction) =>
-            total + Number(transaction.amount),
+            total +
+            Number(transaction.amount),
           0
         );
 
@@ -142,8 +222,44 @@ export async function getDashboardData() {
   );
 
   /*
-   * Convert Prisma Decimal values into numbers
-   * before sending the data to a Client Component.
+   * -------------------------------------------------------
+   * CURRENT MONTH BUDGETS
+   * -------------------------------------------------------
+   */
+
+  const budgets = await prisma.budget.findMany({
+    where: {
+      userId: user.id,
+      month: now.getMonth() + 1,
+      year: now.getFullYear(),
+    },
+    include: {
+      category: true,
+    },
+  });
+
+  /*
+   * -------------------------------------------------------
+   * GOALS
+   * -------------------------------------------------------
+   */
+
+  const goals = await prisma.goal.findMany({
+    where: {
+      userId: user.id,
+    },
+    orderBy: {
+      createdAt: "desc",
+    },
+  });
+
+  /*
+   * -------------------------------------------------------
+   * SERIALIZE TRANSACTIONS
+   *
+   * Prisma Decimal and Date values cannot be passed
+   * directly into a Client Component.
+   * -------------------------------------------------------
    */
 
   const serializedTransactions =
@@ -170,6 +286,12 @@ export async function getDashboardData() {
       },
     }));
 
+  /*
+   * -------------------------------------------------------
+   * SERIALIZE BUDGETS
+   * -------------------------------------------------------
+   */
+
   const serializedBudgets = budgets.map(
     (budget) => ({
       id: budget.id,
@@ -185,6 +307,12 @@ export async function getDashboardData() {
     })
   );
 
+  /*
+   * -------------------------------------------------------
+   * SERIALIZE GOALS
+   * -------------------------------------------------------
+   */
+
   const serializedGoals = goals.map(
     (goal) => ({
       id: goal.id,
@@ -197,20 +325,38 @@ export async function getDashboardData() {
     })
   );
 
+  /*
+   * -------------------------------------------------------
+   * RETURN DASHBOARD DATA
+   * -------------------------------------------------------
+   */
+
   return {
     user: {
       id: user.id,
       name: user.name,
       email: user.email,
     },
-    transactions: serializedTransactions,
-    budgets: serializedBudgets,
-    goals: serializedGoals,
+
+    transactions:
+      serializedTransactions,
+
+    budgets:
+      serializedBudgets,
+
+    goals:
+      serializedGoals,
+
     income,
+
     expenses,
+
     balance,
+
     savingsRate,
+
     categorySpending,
+
     weeklySpending,
   };
 }

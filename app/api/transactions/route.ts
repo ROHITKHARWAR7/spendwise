@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { auth } from "@/auth";
+
 import { prisma } from "@/lib/prisma";
 
 export async function GET() {
@@ -14,44 +15,37 @@ export async function GET() {
       );
     }
 
-    const transactions =
-      await prisma.transaction.findMany({
-        where: {
-          userId: session.user.id,
-        },
-        include: {
-          category: true,
-        },
-        orderBy: {
-          date: "desc",
-        },
-      });
+    const transactions = await prisma.transaction.findMany({
+      where: {
+        userId: session.user.id,
+      },
+      include: {
+        category: true,
+      },
+      orderBy: {
+        date: "desc",
+      },
+    });
 
-    const result = transactions.map(
-      (transaction) => ({
-        id: transaction.id,
-        amount: Number(transaction.amount),
-        type: transaction.type,
-        description: transaction.description,
-        date: transaction.date.toISOString(),
-        paymentMethod:
-          transaction.paymentMethod,
-        notes: transaction.notes,
-        category: {
-          id: transaction.category.id,
-          name: transaction.category.name,
-          icon: transaction.category.icon,
-          color: transaction.category.color,
-        },
-      })
-    );
+    const result = transactions.map((transaction) => ({
+      id: transaction.id,
+      amount: Number(transaction.amount),
+      type: transaction.type,
+      description: transaction.description,
+      date: transaction.date.toISOString(),
+      paymentMethod: transaction.paymentMethod,
+      notes: transaction.notes,
+      category: {
+        id: transaction.category.id,
+        name: transaction.category.name,
+        icon: transaction.category.icon,
+        color: transaction.category.color,
+      },
+    }));
 
     return NextResponse.json(result);
   } catch (error) {
-    console.error(
-      "GET /api/transactions:",
-      error
-    );
+    console.error("GET /api/transactions:", error);
 
     return NextResponse.json(
       { error: "Failed to fetch transactions" },
@@ -75,7 +69,7 @@ export async function POST(request: Request) {
 
     const amount = Number(body.amount);
 
-    if (!amount || amount <= 0) {
+    if (!Number.isFinite(amount) || amount <= 0) {
       return NextResponse.json(
         { error: "Valid amount is required" },
         { status: 400 }
@@ -99,12 +93,11 @@ export async function POST(request: Request) {
       );
     }
 
-    const category =
-      await prisma.category.findUnique({
-        where: {
-          id: body.categoryId,
-        },
-      });
+    const category = await prisma.category.findUnique({
+      where: {
+        id: body.categoryId,
+      },
+    });
 
     if (!category) {
       return NextResponse.json(
@@ -113,26 +106,43 @@ export async function POST(request: Request) {
       );
     }
 
-    const transaction =
-      await prisma.transaction.create({
-        data: {
-          amount,
-          type: body.type,
-          description:
-            body.description || null,
-          date: body.date
-            ? new Date(body.date)
-            : new Date(),
-          paymentMethod:
-            body.paymentMethod || "UPI",
-          notes: body.notes || null,
-          userId: session.user.id,
-          categoryId: body.categoryId,
-        },
-        include: {
-          category: true,
-        },
-      });
+    if (
+      body.type === "INCOME" &&
+      category.name !== "Income"
+    ) {
+      return NextResponse.json(
+        { error: "Income transactions must use the Income category" },
+        { status: 400 }
+      );
+    }
+
+    if (
+      body.type === "EXPENSE" &&
+      category.name === "Income"
+    ) {
+      return NextResponse.json(
+        { error: "Expense transactions cannot use the Income category" },
+        { status: 400 }
+      );
+    }
+
+    const transaction = await prisma.transaction.create({
+      data: {
+        amount,
+        type: body.type,
+        description: body.description?.trim() || null,
+        date: body.date
+          ? new Date(body.date)
+          : new Date(),
+        paymentMethod: body.paymentMethod || "UPI",
+        notes: body.notes?.trim() || null,
+        userId: session.user.id,
+        categoryId: body.categoryId,
+      },
+      include: {
+        category: true,
+      },
+    });
 
     return NextResponse.json(
       {
@@ -141,8 +151,7 @@ export async function POST(request: Request) {
         type: transaction.type,
         description: transaction.description,
         date: transaction.date.toISOString(),
-        paymentMethod:
-          transaction.paymentMethod,
+        paymentMethod: transaction.paymentMethod,
         notes: transaction.notes,
         category: {
           id: transaction.category.id,
@@ -154,13 +163,152 @@ export async function POST(request: Request) {
       { status: 201 }
     );
   } catch (error) {
-    console.error(
-      "POST /api/transactions:",
-      error
-    );
+    console.error("POST /api/transactions:", error);
 
     return NextResponse.json(
       { error: "Failed to create transaction" },
+      { status: 500 }
+    );
+  }
+}
+
+export async function PUT(request: Request) {
+  try {
+    const session = await auth();
+
+    if (!session?.user?.id) {
+      return NextResponse.json(
+        { error: "Unauthorized" },
+        { status: 401 }
+      );
+    }
+
+    const body = await request.json();
+
+    if (!body.id) {
+      return NextResponse.json(
+        { error: "Transaction ID is required" },
+        { status: 400 }
+      );
+    }
+
+    const amount = Number(body.amount);
+
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return NextResponse.json(
+        { error: "Valid amount is required" },
+        { status: 400 }
+      );
+    }
+
+    if (
+      body.type !== "EXPENSE" &&
+      body.type !== "INCOME"
+    ) {
+      return NextResponse.json(
+        { error: "Invalid transaction type" },
+        { status: 400 }
+      );
+    }
+
+    if (!body.categoryId) {
+      return NextResponse.json(
+        { error: "Category is required" },
+        { status: 400 }
+      );
+    }
+
+    const existingTransaction =
+      await prisma.transaction.findFirst({
+        where: {
+          id: body.id,
+          userId: session.user.id,
+        },
+      });
+
+    if (!existingTransaction) {
+      return NextResponse.json(
+        { error: "Transaction not found" },
+        { status: 404 }
+      );
+    }
+
+    const category = await prisma.category.findUnique({
+      where: {
+        id: body.categoryId,
+      },
+    });
+
+    if (!category) {
+      return NextResponse.json(
+        { error: "Category not found" },
+        { status: 404 }
+      );
+    }
+
+    if (
+      body.type === "INCOME" &&
+      category.name !== "Income"
+    ) {
+      return NextResponse.json(
+        { error: "Income transactions must use the Income category" },
+        { status: 400 }
+      );
+    }
+
+    if (
+      body.type === "EXPENSE" &&
+      category.name === "Income"
+    ) {
+      return NextResponse.json(
+        { error: "Expense transactions cannot use the Income category" },
+        { status: 400 }
+      );
+    }
+
+    const transaction =
+      await prisma.transaction.update({
+        where: {
+          id: existingTransaction.id,
+        },
+        data: {
+          amount,
+          type: body.type,
+          description:
+            body.description?.trim() || null,
+          categoryId: body.categoryId,
+          paymentMethod:
+            body.paymentMethod || "UPI",
+          date: body.date
+            ? new Date(body.date)
+            : existingTransaction.date,
+          notes: body.notes?.trim() || null,
+        },
+        include: {
+          category: true,
+        },
+      });
+
+    return NextResponse.json({
+      id: transaction.id,
+      amount: Number(transaction.amount),
+      type: transaction.type,
+      description: transaction.description,
+      date: transaction.date.toISOString(),
+      paymentMethod: transaction.paymentMethod,
+      notes: transaction.notes,
+      category: {
+        id: transaction.category.id,
+        name: transaction.category.name,
+        icon: transaction.category.icon,
+        color: transaction.category.color,
+      },
+    });
+  } catch (error) {
+    console.error("PUT /api/transactions:", error);
+
+    return NextResponse.json(
+      { error: "Failed to update transaction" },
       { status: 500 }
     );
   }
@@ -211,10 +359,7 @@ export async function DELETE(request: Request) {
       success: true,
     });
   } catch (error) {
-    console.error(
-      "DELETE /api/transactions:",
-      error
-    );
+    console.error("DELETE /api/transactions:", error);
 
     return NextResponse.json(
       { error: "Failed to delete transaction" },
